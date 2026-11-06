@@ -1,0 +1,5 @@
+group,n_universities,n_firms,univ_pre_mean,firm_pre_mean,filings_att,filings_se_cluster,filings_p,filings_stars,granted_att,granted_se_cluster,granted_p,granted_stars,grant_share_of_filing_att
+All universities,2982,11122,0.148,0.243,0.577,0.109,1.29e-07,***,0.209,0.053,9.14e-05,***,47%
+Elite (SIR 2010 or INI),216,11122,1.17,0.243,2.596,0.642,5.29e-05,***,2.064,0.564,0.000256,***,90%
+Non-elite public,399,11122,0.052,0.243,-0.02,0.038,0.592,"",-0.052,0.023,0.0244,*,n.e.
+Non-elite private,2367,11122,0.071,0.243,0.493,0.122,5.01e-05,***,0.083,0.039,0.0311,*,23%
