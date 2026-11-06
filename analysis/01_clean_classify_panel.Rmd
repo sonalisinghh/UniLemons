@@ -1,0 +1,592 @@
+---
+title: "01. Clean, classify applicants, deduplicate to institutions, build panel"
+author: "Sonali Singh"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    code_folding: show
+params:
+  extract_date: "2025-08-15"   # date of the IPO extract
+  year_min: 2005
+  year_max: 2024
+  nirf_year: 2015              # first exposed filing year; 2014 is the base year
+  fee_year: 2021               # fee cut 21 Sep 2021 (descriptive only)
+---
+
+Inputs: the three IP India search exports (`data-raw/`, fetched by `data-raw/download.R`). Outputs in `data/`: an application table, a unit (institution) attribute table and a balanced institution-year panel with the treatment dummies. Outputs in `output/review/`: tables for checking the classification and the institution clusters by hand. No estimation here.
+
+Pipeline: load -\> stack and deduplicate applications -\> dates -\> normalise applicant names -\> classify names (modal class per name) -\> collapse names to institutions -\> review tables -\> unit attributes -\> panel.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 9, fig.height = 5)
+suppressPackageStartupMessages({
+  library(here); library(data.table); library(stringr); library(lubridate); library(knitr)
+})
+setDTthreads(0)
+source(here("data-raw", "download.R"))
+dir.create(here("data"), showWarnings = FALSE); dir.create(here("output", "review"), showWarnings = FALSE, recursive = TRUE)
+
+extract_d <- as.Date(params$extract_date)
+pub_complete_year <- year(extract_d) - 2L    # 18-month publication lag: last filing year fully observed
+nirf_year <- as.integer(params$nirf_year); fee_year <- as.integer(params$fee_year)
+YEARS <- seq(params$year_min, params$year_max)
+
+f_pub <- here("data-raw", "IPR_published.csv.gz")
+f_gr  <- here("data-raw", "IPR_granted.csv.gz")
+f_er  <- here("data-raw", "IPR_granted_er_as.csv.gz")
+
+snake <- function(x) { x <- tolower(x); x <- gsub("\\(ipc\\)", "ipc", x); x <- gsub("u/s 11a", "us11a", x)
+  x <- gsub("[^a-z0-9]+", "_", x); gsub("^_|_$", "", x) }
+mode_chr <- function(x) { x <- x[!is.na(x) & x != ""]; if (!length(x)) return(NA_character_); names(which.max(table(x))) }
+```
+
+# 1. Load
+
+Only the columns the panel needs. Everything is read as character; dates are parsed in section 3.
+
+```{r load}
+core_cols <- c("Application Number", "Publication Date", "Application Filing Date", "Priority Country",
+               "Priority Date", "Field Of Invention", "Classification (IPC)", "Invention Title")
+app_cols <- as.vector(outer(paste0("Applicant", 1:3), c("Name", "State", "Country"), paste, sep = " "))
+inv_cols <- paste0("Inventor", 1:10, " Name")
+er_cols  <- c("ER-Legal Status", "ER-Date of Grant", "ER-Date of Patent", "ER-Due Date of Next Renewal",
+              "ER-Type of Application", "ER-Grantee1 Grantee Type")
+as_cols  <- c("AS-Request For Examination Date", "AS-First Examination Report Date", "AS-Reply To Fer Date",
+              "AS-Date Of Certificate Issue")
+na_str <- c("", "NA", "NaN", "nan", "None", "NULL", "---")
+read_ipr <- function(path, cols) {
+  hdr <- names(fread(path, nrows = 0))
+  fread(path, select = intersect(cols, hdr), colClasses = "character", na.strings = na_str,
+        encoding = "UTF-8", strip.white = TRUE, showProgress = FALSE)
+}
+pub <- read_ipr(f_pub, c(core_cols, app_cols, inv_cols))
+gr  <- read_ipr(f_gr,  c(core_cols, app_cols, inv_cols))
+er  <- read_ipr(f_er,  c("Application Number", er_cols, as_cols))
+for (d in list(pub, gr, er)) setnames(d, snake(names(d)))
+cat("rows read: published", nrow(pub), "| granted", nrow(gr), "| ER/AS", nrow(er), "\n")
+```
+
+# 2. One row per application
+
+An application is granted if its number appears in the granted file. Where both files carry it, the granted row is kept. E-register and status fields exist for granted applications only, so refusals and abandonments are not observed: the data distinguish granted from published-not-(yet)-granted, nothing finer.
+
+```{r stack}
+pub[, src := "published"]; gr[, src := "granted"]
+gr_ids <- unique(gr$application_number)
+qc_overlap <- data.table(published = nrow(pub), granted = nrow(gr),
+  granted_also_in_published = sum(gr_ids %in% pub$application_number),
+  dup_in_published = sum(duplicated(pub$application_number)), dup_in_granted = sum(duplicated(gr$application_number)),
+  er_rows = nrow(er), er_in_granted = sum(unique(er$application_number) %in% gr_ids))
+kable(t(qc_overlap), col.names = "n")
+
+apps <- rbindlist(list(gr, pub), use.names = TRUE, fill = TRUE)[!is.na(application_number)]
+setorder(apps, application_number, src)                 # "granted" < "published": granted row wins
+apps <- unique(apps, by = "application_number")
+apps[, granted := application_number %in% gr_ids]
+apps <- merge(apps, unique(er[!is.na(application_number)], by = "application_number"), by = "application_number", all.x = TRUE)
+rm(pub, gr, er); invisible(gc())
+cat("applications:", nrow(apps), "| granted:", sum(apps$granted), "\n")
+```
+
+# 3. Dates and derived timing
+
+The extract mixes `dd/mm/yyyy` and ISO `yyyy-mm-dd`; both are parsed. The slot check below must show `second_gt12` near 0 (otherwise the day/month order is wrong).
+
+```{r dates}
+parse_ipo <- function(x) as.Date(parse_date_time(x, orders = c("Ymd", "dmY", "dmy"), quiet = TRUE))
+date_cols <- c("application_filing_date", "publication_date", "priority_date", "er_date_of_grant", "er_date_of_patent",
+               "er_due_date_of_next_renewal", "as_request_for_examination_date", "as_first_examination_report_date",
+               "as_reply_to_fer_date", "as_date_of_certificate_issue")
+date_cols <- intersect(date_cols, names(apps))
+slot_check <- function(x) {
+  x <- x[!is.na(x) & grepl("/", x, fixed = TRUE)]
+  if (!length(x)) return(list(first_gt12 = NA_real_, second_gt12 = NA_real_))
+  p <- tstrsplit(x, "/", fixed = TRUE)
+  list(first_gt12 = mean(suppressWarnings(as.integer(p[[1]])) > 12, na.rm = TRUE),
+       second_gt12 = mean(suppressWarnings(as.integer(p[[2]])) > 12, na.rm = TRUE))
+}
+for (v in date_cols) {
+  d <- parse_ipo(apps[[v]])
+  if (v != "er_due_date_of_next_renewal") d[!is.na(d) & (d <= as.Date("1900-01-01") | d > extract_d)] <- NA
+  set(apps, j = paste0(v, "_d"), value = d)
+}
+qc_dates <- rbindlist(lapply(date_cols, function(v) {
+  raw <- apps[[v]]; d <- apps[[paste0(v, "_d")]]
+  c(list(col = v, nonmissing = sum(!is.na(raw)), parsed = sum(!is.na(d)), fail_rate = round(mean(is.na(d[!is.na(raw)])), 4)),
+    slot_check(raw), list(min = min(d, na.rm = TRUE), max = max(d, na.rm = TRUE)))
+}))
+kable(qc_dates, digits = 4)
+
+apps[, filing_date := application_filing_date_d]
+apps[, filing_year := year(filing_date)]
+apps[, grant_date  := er_date_of_grant_d]
+apps[, pub_lag_days   := as.integer(publication_date_d - filing_date)]
+apps[, grant_lag_days := as.integer(grant_date - filing_date)]
+apps[, granted_within_4y := granted & !is.na(grant_lag_days) & grant_lag_days <= 4 * 365.25]
+apps[, g4_observable := filing_date <= extract_d - 4 * 365.25]        # cohorts with 4 full years of exposure
+apps[, no_priority := is.na(priority_date_d) & is.na(priority_country)]
+apps[, early_pub   := no_priority & !is.na(pub_lag_days) & pub_lag_days <= 365]   # Form 9 proxy (standard is 18 months)
+apps[, lapsed := granted & !is.na(er_legal_status) & er_legal_status %chin% c("Ceased", "Under Extension Period")]
+apps[, post_fee_date := !is.na(filing_date) & filing_date >= as.Date("2021-09-21")]
+apps[, n_inventors := rowSums(!is.na(.SD)), .SDcols = patterns("^inventor[0-9]+_name$")]
+apps[, n_applicants := rowSums(!is.na(.SD)), .SDcols = patterns("^applicant[0-9]+_name$")]
+apps[, ipc_section := toupper(substr(str_trim(classification_ipc), 1, 1))]
+apps[!ipc_section %chin% LETTERS[1:8], ipc_section := NA_character_]
+```
+
+# 4. Applicant names
+
+Normalisation: upper case, punctuation to spaces, drop articles and corporate suffixes, squeeze spaces. `entity` is the normalised first-applicant name. Domestic = first applicant's country is India.
+
+```{r names}
+norm_name <- function(x) {
+  x <- toupper(x)
+  x <- str_replace_all(x, "[^A-Z0-9 ]", " ")
+  x <- str_replace_all(x, "\\b(THE|M S|MESSRS|LTD|LIMITED|PVT|PRIVATE|INC|LLC|LLP|CO|COMPANY|CORP|CORPORATION)\\b", " ")
+  x <- str_replace_all(x, c("\\bPROFESIONAL\\b" = "PROFESSIONAL", "\\bUNIVERSTIY\\b" = "UNIVERSITY", "\\bUNIVERISTY\\b" = "UNIVERSITY",
+                            "\\bUNIVESITY\\b" = "UNIVERSITY", "\\bINSTITITE\\b" = "INSTITUTE", "\\bINSTITUE\\b" = "INSTITUTE",
+                            "\\bENGINEERNG\\b" = "ENGINEERING", "\\bENGG\\b" = "ENGINEERING", "\\bTECH\\b" = "TECHNOLOGY"))
+  str_squish(x)
+}
+apps[, entity := norm_name(applicant1_name)]
+apps[entity == "", entity := NA_character_]
+apps[, app1_state := str_squish(toupper(applicant1_state))]
+apps[, domestic := !is.na(applicant1_country) & applicant1_country == "India"]
+cat("domestic applications:", sum(apps$domestic), "| distinct domestic first-applicant names:", uniqueN(apps[domestic == TRUE, entity]), "\n")
+```
+
+# 5. Classification
+
+Two layers. First every first-applicant name gets a **sector** by regex, with precedence incubator \> education \> government lab / PSU \> firm \> individual, and then its modal sector across its applications (a name is never dropped for carrying two sectors; `class_conflict` flags the ones that did).
+
+Second, educational names get a **tier** and an **ownership**:
+
+Ownership has three values: `central` (centrally funded: the INI families, central universities and central institutes), `state` (state-funded) and `private`. Where an institution is matched to the UGC consolidated list of universities (`R/ugc_match.csv`, hand-checked matches), the UGC type sets ownership; the pattern file overrides it only for publicly run deemed universities (IISc, TIFR, ISI, ...). The `elite` flag is pre-treatment research capacity, independent of ownership:
+
+-   `elite`: any institution in the SCImago Institutions Ranking 2010 for India (97 research universities and institutes, public and private alike: `R/institution_patterns.csv`, source `scimago2010`), plus the Institutes of National Importance families that the list only samples (IIT, NIT, IIIT, IISER, IIM, AIIMS), central universities, and the manual additions in the same file (DTU, NSUT, VNIT). Elite is a research-capacity tier measured before the shock, not an ownership class.
+-   `state` ownership: "Government", state acts, agricultural, technological, open and health universities, the named public list, and any "University of <state or city>" / "<state or city> University" not caught as central.
+-   `private` ownership: everything else: universities, deemed universities, institutes, colleges, schools and polytechnics. Affiliated engineering, pharmacy, management and medical colleges are privately owned in nearly every case (hand-checked on the full data, 5 Nov 2026), so they sit here.
+
+`tier` combines the two for labelling: `elite`, else the ownership (`central`, `state`, `private`).
+
+So the panel can be cut four ways: universities vs firms; by ownership (central / state / private); by capacity (elite / non-elite); and their interaction. Government labs and PSUs (`govt_lab_psu`) stay in the panel as a second control group: publicly funded, never ranked.
+
+```{r regex}
+rx_edu <- paste(
+  "UNIVERSITY", "UNIVERSIDAD", "UNIVERSITE", "UNIVERSITAT", "INSTITUTE OF (\\w+ )?TECHNOLOGY", "INSTITUTE OF SCIENCE",
+  "INSTITUTE OF ENGINEERING", "INSTITUTE OF MANAGEMENT", "INSTITUTE OF INFORMATION TECHNOLOGY", "INSTITUTE OF MEDICAL",
+  "INSTITUTE FOR MEDICAL", "INSTITUTE OF PHARMA", "INSTITUTE OF DESIGN", "INSTITUTE OF HIGHER", "HIGHER EDUCATION",
+  "GROUP OF INSTITUTIONS", "GROUP OF COLLEGES", "TECHNICAL CAMPUS", "RESEARCH FOUNDATION", "FOUNDATION FOR SCIENCE",
+  "COLLEGE", "POLYTECHNIC", "VIDYAPEETH", "VIDYAPITH", "VISHWAVIDYALAYA", "VISHWAVIDHYALAYA", "VIDYALAYA", "DEEMED",
+  "SCHOOL OF", "ACADEMY OF", "\\bIIT\\b", "\\bNIT\\b", "\\bIISC\\b", "\\bIISER\\b", "\\bIIIT\\b", "\\bAIIMS\\b", "\\bNITK\\b",
+  "\\bBITS\\b", "\\bIIM\\b", "\\bJNCASR\\b", "CENTRE FOR ADVANCED SCIENTIFIC RESEARCH", "EDUCATION", "SHIKSHAN", "GURUKUL",
+  "\\bNIPER\\b", "INDIAN STATISTICAL INSTITUTE", "TATA INSTITUTE OF FUNDAMENTAL", "\\bTIFR\\b", "\\bIIEST\\b",
+  "\\bNIMHANS\\b", "\\bPGIMER\\b", "\\bJIPMER\\b", "\\bSGPGI\\b", sep = "|")
+rx_incubator <- "INCUBAT|\\bTBI\\b|RESEARCH PARK|FOUNDATION FOR INNOVATION AND TECHNOLOGY TRANSFER|\\bFITT\\b|\\bSINE\\b|\\bSIDBI\\b"
+rx_ini <- paste(   # Institutes of National Importance families: elite whether or not in the 2010 list; one unit per campus
+  "INDIAN INSTITUTE OF TECHNOLOGY", "\\bIIT\\b", "INDIAN INSTITUTE OF SCIENCE EDUCATION", "\\bIISER\\b",
+  "NATIONAL INSTITUTE OF TECHNOLOGY", "\\bNIT\\b", "\\bNITK\\b", "\\bMNIT\\b", "\\bMNNIT\\b", "\\bVNIT\\b", "\\bSVNIT\\b", "\\bMANIT\\b",
+  "INDIAN INSTITUTE OF INFORMATION TECHNOLOGY", "\\bIIIT\\b", "\\bIIITDM\\b", "INDIAN INSTITUTE OF MANAGEMENT", "\\bIIM\\b",
+  "ALL INDIA INSTITUTE OF MEDICAL", "\\bAIIMS\\b", "INDIAN INSTITUTE OF SPACE SCIENCE", "SCHOOL OF PLANNING AND ARCHITECTURE",
+  "NATIONAL INSTITUTE OF INDUSTRIAL ENGINEERING", "INDIAN INSTITUTE OF PETROLEUM AND ENERGY", "SANT LONGOWAL INSTITUTE",
+  "INDIAN INSTITUTE OF FOREIGN TRADE", "RAJIV GANDHI INSTITUTE OF PETROLEUM", "CENTRAL UNIVERSITY", sep = "|")
+rx_public <- paste(
+  "GOVERNMENT", "\\bGOVT\\b", "CENTRAL UNIVERSITY", "STATE UNIVERSITY", "AGRICULTURAL UNIVERSITY", "AGRICULTURE UNIVERSITY",
+  "VETERINARY", "HORTICULTUR", "FISHERIES UNIVERSITY", "TECHNOLOGICAL UNIVERSITY", "TECHNICAL UNIVERSITY", "OPEN UNIVERSITY",
+  "HEALTH SCIENCES UNIVERSITY", "UNIVERSITY OF HEALTH SCIENCES", "\\bSANSKRIT\\b", "NATIONAL LAW", "UNIVERSITY OF AGRICULTURAL SCIENCES",
+  "INDIRA GANDHI", "ABDUL KALAM TECHNICAL", "RAJIV GANDHI PROUDYOGIKI", "GUJARAT TECHNOLOGICAL", "BIJU PATNAIK", "MAKAUT",
+  "MAULANA ABUL KALAM", "WEST BENGAL UNIVERSITY", "UTTARAKHAND TECHNICAL", "AMBEDKAR", "HEMCHANDRACHARYA", "GUJARAT UNIVERSITY",
+  "SAURASHTRA UNIVERSITY", "BARKATULLAH", "JIWAJI", "RANI DURGAVATI", "UTKAL UNIVERSITY", "SAMBALPUR", "BERHAMPUR UNIVERSITY",
+  "NAGPUR UNIVERSITY", "AMRAVATI UNIVERSITY", "SOLAPUR UNIVERSITY", "GOA UNIVERSITY", "KANNUR UNIVERSITY", "CALICUT",
+  "PERIYAR UNIVERSITY", "ALAGAPPA", "THIRUVALLUVAR", "MANONMANIAM", "TAMIL ?NADU (DR|TEACHERS|OPEN|PHYSICAL|MUSIC|FISHERIES)",
+  "DIBRUGARH", "ASSAM UNIVERSITY", "MIZORAM UNIVERSITY", "MANIPUR UNIVERSITY", "NAGALAND UNIVERSITY", "TRIPURA UNIVERSITY",
+  "SIKKIM UNIVERSITY", "MOHANLAL SUKHADIA", "MAHARSHI DAYANAND", "CHAUDHARY CHARAN SINGH", "CHAUDHARY DEVI LAL",
+  "DEENBANDHU CHHOTU RAM", "HIMACHAL PRADESH UNIVERSITY", "JAMMU UNIVERSITY", "UNIVERSITY OF JAMMU", "CLUSTER UNIVERSITY",
+  "SHRI MATA VAISHNO", "BUNDELKHAND", "GORAKHPUR UNIVERSITY", "CHHATRAPATI SHAHU", "MAHATMA JYOTIBA PHULE", "BABASAHEB BHIMRAO",
+  "KASHI VIDYAPITH", "SAMPURNANAND", "PATNA UNIVERSITY", "MAGADH UNIVERSITY", "RANCHI UNIVERSITY", "BIRSA AGRICULTURAL",
+  "VINOBA BHAVE", "KOLHAN", "GURU GHASIDAS", "PANDIT RAVISHANKAR", "BASTAR UNIVERSITY", "BILASPUR UNIVERSITY", "CHHATTISGARH SWAMI",
+  "VIKRAM UNIVERSITY", "AWADHESH PRATAP", "\\bDAVV\\b", "\\bRGPV\\b", "\\bJNTU", "JAWAHARLAL NEHRU TECHNOLOGICAL", "ACHARYA NAGARJUNA",
+  "YOGI VEMANA", "KRISHNA UNIVERSITY", "ADIKAVI NANNAYA", "VIKRAMA SIMHAPURI", "DRAVIDIAN", "PALAMURU", "TELANGANA UNIVERSITY",
+  "SATAVAHANA", "ENGLISH AND FOREIGN LANGUAGES", "TUMKUR UNIVERSITY", "DAVANGERE UNIVERSITY", "RANI CHANNAMMA", "VIJAYANAGARA",
+  "BENGALURU CITY", "VISVESVARAYA TECHNOLOGICAL", "KARNATAKA STATE", "MEDICAL COLLEGE AND HOSPITAL", "UNIVERSITY OF KASHMIR",
+  "KASHMIR UNIVERSITY", "ISLAMIC UNIVERSITY OF SCIENCE", "SHER E KASHMIR", "LALIT NARAYAN", "BIHAR AGRICULTURAL", "NALANDA",
+  "RAJENDRA AGRICULTURAL", "DR RAJENDRA PRASAD", "SWAMI KESHWANAND", "MAHARANA PRATAP", "AGRICULTURE AND TECHNOLOGY",
+  "ANAND AGRICULTURAL", "NAVSARI", "JUNAGADH", "KERALA AGRICULTURAL", "KERALA VETERINARY", "ORISSA UNIVERSITY", "ODISHA UNIVERSITY",
+  "ASSAM AGRICULTURAL", "CENTRAL AGRICULTURAL", "ACHARYA N G RANGA", "PROFESSOR JAYASHANKAR", "SRI KONDA LAXMAN", "NATIONAL DAIRY RESEARCH",
+  "SARDARKRUSHINAGAR", "VASANTRAO NAIK", "MAHATMA PHULE KRISHI", "DR BALASAHEB SAWANT", "PUNJAB TECHNICAL", "I K GUJRAL",
+  "MAHARAJA RANJIT SINGH PUNJAB TECHNICAL", "HARCOURT BUTLER", "MADAN MOHAN MALAVIYA", "KAMLA NEHRU", "DR A P J ABDUL KALAM",
+  "UTTAR PRADESH TEXTILE", "KING GEORGE", "BABA FARID", "RAJIV GANDHI UNIVERSITY OF HEALTH", "KALOJI NARAYANA", "NTR UNIVERSITY",
+  "MAHARASHTRA UNIVERSITY OF HEALTH", "KERALA UNIVERSITY OF HEALTH", "RAJASTHAN UNIVERSITY OF HEALTH", "DR Y S R", "ATAL BIHARI",
+  "MADHYA PRADESH MEDICAL", "WEST BENGAL UNIVERSITY OF HEALTH", "NATIONAL INSTITUTE OF (DESIGN|FASHION|TECHNICAL TEACHERS|FOUNDRY|HOMOEOPATHY|AYURVEDA|SIDDHA|UNANI)",
+  "SCHOOL OF PLANNING", "INSTITUTE OF CHEMICAL TECHNOLOGY", "COLLEGE OF ENGINEERING (PUNE|TRIVANDRUM|GUINDY|ANNA)", "GOVT COLLEGE",
+  "ROHILKHAND", "NORTH MAHARASHTRA", "STATE BOARD", "CHANDRAGUPT INSTITUTE", "KAVIKULAGURU", "GONDWANA", "SANT GADGE BABA", "SWAMI RAMANAND TEERTH",
+  "YASHWANTRAO CHAVAN", "SHREEMATI NATHIBAI", "\\bSNDT\\b", "GUJARAT AYURVED", "KADI SARVA", "MAHARAJA KRISHNAKUMARSINHJI", "VEER NARMAD",
+  "KRANTIGURU", "CHILDREN S UNIVERSITY", "INDIAN INSTITUTE OF TEACHER", sep = "|")
+rx_private <- paste(   # explicit private markers; the named institutions live in R/institution_patterns.csv
+  "TRUST", "FOUNDATION", "SOCIETY", "DEEMED", "GROUP OF INSTITUTIONS", "GROUP OF COLLEGES", "TECHNICAL CAMPUS", "EDUCATIONAL",
+  "INTERNATIONAL UNIVERSITY", "GLOBAL UNIVERSITY", "WORLD UNIVERSITY", sep = "|")
+rx_other <- paste(   # schooling and training, not higher education
+  "PUBLIC SCHOOL", "HIGH SCHOOL", "SECONDARY SCHOOL", "SENIOR SECONDARY", "\\bSCHOOL$", "KENDRIYA VIDYALAYA", "NAVODAYA",
+  "^VIDYALAYA", "VIDYALAYA$", "POLYTECHNIC", "INDUSTRIAL TRAINING", "\\bITI\\b", "ACADEMY$", "TRAINING INSTITUTE",
+  "COACHING", "TUTORIAL", "PLAY SCHOOL", "NURSERY", "MONTESSORI", "INTERNATIONAL SCHOOL", "CONVENT", sep = "|")
+rx_govt_lab <- paste(
+  "COUNCIL OF SCIENTIFIC", "\\bCSIR\\b", "DEFENCE RESEARCH", "\\bDRDO\\b", "INDIAN COUNCIL OF", "\\bICAR\\b", "\\bICMR\\b",
+  "DEPARTMENT OF", "MINISTRY OF", "GOVERNMENT OF", "GOVT OF", "BHABHA ATOMIC", "INDIAN SPACE", "\\bISRO\\b", "SECRETARY",
+  "PRESIDENT OF INDIA", "DIRECTOR GENERAL", "NATIONAL RESEARCH DEVELOPMENT", "\\bNRDC\\b", "CENTRAL .* RESEARCH INSTITUTE",
+  "NATIONAL .* LABORATORY", "NATIONAL .* RESEARCH", "BHARAT HEAVY", "\\bBHEL\\b", "HINDUSTAN AERONAUTICS", "INDIAN OIL",
+  "OIL AND NATURAL GAS", "\\bONGC\\b", "STEEL AUTHORITY", "\\bNTPC\\b", "\\bBEL\\b", "BHARAT ELECTRONICS", "\\bDAE\\b",
+  "INDIAN INSTITUTE OF (CHEMICAL|TOXICOLOGY|INTEGRATIVE|PETROLEUM|HORTICULT|SPICES|RICE|WHEAT|SUGARCANE|PULSES|VEGETABLE|SOIL|PACKAGING|TROPICAL|ASTROPHYSICS)",
+  "CENTRE FOR (CELLULAR|DNA|DEVELOPMENT OF ADVANCED|MATERIALS)", "\\bC DAC\\b", "\\bCDAC\\b", "RAMAN RESEARCH", "PHYSICAL RESEARCH LABORATORY",
+  "SAHA INSTITUTE", "BOSE INSTITUTE", "INSTITUTE OF (PHYSICS|MATHEMATICAL|NANO|LIFE SCIENCES|GENOMICS|MICROBIAL|BIORESOURCES|ADVANCED STUDY)",
+  "NATIONAL (CENTRE|CENTER|INSTITUTE) (FOR|OF)", sep = "|")
+rx_firm <- paste(
+  "INDUSTRIES", "TECHNOLOGIES", "LABORATORIES", "ENTERPRISES", "KABUSHIKI", "\\bKK\\b", "\\bGMBH\\b", "\\bAG\\b", "\\bSA\\b",
+  "\\bBV\\b", "\\bNV\\b", "\\bPLC\\b", "\\bSPA\\b", "\\bSRL\\b", "\\bOY\\b", "\\bAB\\b", "\\bAS\\b", "\\bSE\\b", "PHARMA",
+  "SOLUTIONS", "SYSTEMS", "SERVICES", "MOTORS", "ELECTRONICS", "CHEMICALS", "TEXTILES", "STEEL", "CEMENT", "ENGINEERING WORKS",
+  "INFOTECH", "SOFTWARE", "BIOTECH", "HEALTHCARE", "ENERGY", "AUTOMOTIVE", "MACHINES", "PRODUCTS", "EXPORTS", "TRADING",
+  "AGENCIES", "HOLDINGS", "VENTURES", "INNOVATIONS", "LABS", "\\bOPC\\b", "\\bLIMITED\\b", "\\bLTD\\b", sep = "|")
+PLACES <- c("ANDHRA","ARUNACHAL","ASSAM","BIHAR","CHHATTISGARH","GOA","GUJARAT","HARYANA","HIMACHAL","JHARKHAND","KARNATAKA","KERALA",
+  "MADHYA PRADESH","MAHARASHTRA","MANIPUR","MEGHALAYA","MIZORAM","NAGALAND","ODISHA","ORISSA","PUNJAB","RAJASTHAN","SIKKIM","TAMIL NADU",
+  "TAMILNADU","TELANGANA","TRIPURA","UTTAR PRADESH","UTTARAKHAND","UTTARANCHAL","WEST BENGAL","DELHI","JAMMU","KASHMIR","LADAKH","PUDUCHERRY",
+  "PONDICHERRY","CHANDIGARH","MUMBAI","BOMBAY","CALCUTTA","KOLKATA","MADRAS","CHENNAI","HYDERABAD","BANGALORE","BENGALURU","PUNE","POONA",
+  "LUCKNOW","KANPUR","ALLAHABAD","PRAYAGRAJ","PATNA","RANCHI","NAGPUR","MYSORE","MYSURU","MANGALORE","KURUKSHETRA","ROHTAK","JODHPUR","JAIPUR",
+  "KOTA","UDAIPUR","AJMER","BIKANER","GWALIOR","JABALPUR","INDORE","BHOPAL","SAGAR","REWA","RAIPUR","BILASPUR","BURDWAN","KALYANI","NORTH BENGAL",
+  "GAUHATI","GUWAHATI","DIBRUGARH","TEZPUR","SILCHAR","SHILLONG","MADURAI","TIRUCHIRAPPALLI","TRICHY","COIMBATORE","SALEM","VELLORE",
+  "THANJAVUR","TIRUNELVELI","CALICUT","COCHIN","KANNUR","KOTTAYAM","TRIVANDRUM","VISAKHAPATNAM","GUNTUR","TIRUPATI","KAKATIYA",
+  "WARANGAL","OSMANIA","GULBARGA","KALABURAGI","DHARWAD","SHIVAMOGGA","TUMKUR","DAVANGERE","BELLARY","GOA","VADODARA","BARODA",
+  "RAJKOT","BHAVNAGAR","SURAT","AHMEDABAD","NORTH GUJARAT","SOUTH GUJARAT","SAURASHTRA","KUTCH","AMRAVATI","AURANGABAD","SOLAPUR",
+  "KOLHAPUR","NANDED","JALGAON","MEERUT","AGRA","BAREILLY","GORAKHPUR","JAUNPUR","VARANASI","BUNDELKHAND","JHANSI","FAIZABAD","AYODHYA",
+  "SAMBALPUR","BERHAMPUR","UTKAL","BHAGALPUR","MUZAFFARPUR","DARBHANGA","MAGADH","GAYA","JAMSHEDPUR","HAZARIBAGH","DHANBAD","KOLHAN",
+  "SRINAGAR","HIMACHAL","SHIMLA","SOLAN","PALAMPUR","HISAR","SIRSA","AMBALA","PATIALA","AMRITSAR","LUDHIANA","BATHINDA","JALANDHAR",
+  "DEHRADUN","GARHWAL","KUMAUN","KUMAON","NAINITAL","HALDWANI","TRIPURA","MANIPUR","MIZORAM","NAGALAND","SIKKIM","ARUNACHAL","ASSAM")
+rx_place_univ <- paste0("^(UNIVERSITY OF (", paste(PLACES, collapse = "|"), ")|(", paste(PLACES, collapse = "|"), ") UNIVERSITY)$")
+```
+
+```{r classify}
+rx_suffix <- "\\b(LTD|LIMITED|PVT|PRIVATE|INC|LLC|LLP|CORP|CORPORATION|COMPANY|CO)\\b"
+apps[, raw_up := str_replace_all(toupper(applicant1_name), "[^A-Z0-9 ]", " ")]
+apps[, has_suffix := str_detect(raw_up, rx_suffix)]
+rx_govt_strong <- paste("COUNCIL OF SCIENTIFIC", "\\bCSIR\\b", "DEFENCE RESEARCH", "\\bDRDO\\b", "INDIAN COUNCIL OF", "\\bICAR\\b", "\\bICMR\\b",
+  "MINISTRY OF", "GOVERNMENT OF INDIA", "PRESIDENT OF INDIA", "SECRETARY", "DIRECTOR GENERAL", "BHABHA ATOMIC", "INDIAN SPACE", "\\bISRO\\b",
+  "NATIONAL INSTITUTE OF OCEAN", "NATIONAL .* LABORATORY", "CENTRAL .* RESEARCH INSTITUTE", "\\bNRDC\\b", "\\bC DAC\\b", "\\bCDAC\\b", sep = "|")
+sector_row <- function(nm, has_suffix) {
+  fcase(is.na(nm),                                   NA_character_,
+        str_detect(nm, rx_incubator),                "incubator",
+        str_detect(nm, rx_govt_strong),              "govt_lab_psu",
+        str_detect(nm, rx_edu),                      "edu",
+        str_detect(nm, rx_govt_lab),                 "govt_lab_psu",
+        has_suffix | str_detect(nm, rx_firm),        "firm",
+        default = "individual_other")
+}
+apps[, sector_row := sector_row(entity, has_suffix)]
+sec_tab <- apps[!is.na(entity), .N, by = .(entity, sector_row)]
+setorder(sec_tab, entity, -N, sector_row)
+sec_name <- sec_tab[, .(sector = sector_row[1], n_sectors = .N), by = entity]
+apps <- merge(apps, sec_name, by = "entity", all.x = TRUE, sort = FALSE)
+apps[, class_conflict := !is.na(n_sectors) & n_sectors > 1]
+apps[, edu := !is.na(sector) & sector == "edu"]
+kable(apps[domestic == TRUE, .N, by = sector][order(-N)], caption = "Domestic applications by sector (modal sector per name)")
+```
+
+# 6. Educational names: pattern file, tier, ownership, institution id
+
+The institution id is built in this order, first hit wins:
+
+1.  `R/institution_overrides.csv` (hand decisions);
+2.  `R/institution_patterns.csv`: one regex per known institution, all campuses and spellings mapped to one id (the SCImago 2010 list, plus multi-campus private groups like Amity, VIT, SRM, Manipal, UPES, Graphic Era, and the big affiliated colleges); a hit also fixes tier (elite) and ownership;
+3.  the IIT / NIT / IIIT / IISER / IIM / AIIMS families, keyed on campus (each campus has its own board, so each is a unit);
+4.  a canonical name: prefix and deemed-suffix removal, "University of X" and "X University" folded together, up to two trailing place words dropped, never below three words, generic names never merged.
+
+Tier and ownership then follow section 5. Names that fit nothing but the generic rules are the ones to look at in `review_edu_unmatched.csv`.
+
+```{r institutions}
+PREFIX_RX <- "^(THE REGISTRAR|REGISTRAR|DIRECTOR|PRINCIPAL|DEAN|VICE CHANCELLOR|CHANCELLOR|DEPARTMENT OF [A-Z ]+?|DEPT OF [A-Z ]+?|SCHOOL OF [A-Z ]+?|CENTRE FOR [A-Z ]+?|CENTER FOR [A-Z ]+?|FACULTY OF [A-Z ]+?)\\s+(?=[A-Z])"
+CAMPUS <- unique(c("BOMBAY","DELHI","MADRAS","KANPUR","KHARAGPUR","ROORKEE","GUWAHATI","HYDERABAD","INDORE","MANDI","ROPAR","PATNA",
+  "GANDHINAGAR","JODHPUR","BHUBANESWAR","VARANASI","BHU","DHANBAD","ISM","TIRUPATI","PALAKKAD","JAMMU","DHARWAD","BHILAI","GOA",
+  "TIRUCHIRAPPALLI","TRICHY","WARANGAL","SURATHKAL","KARNATAKA","CALICUT","ROURKELA","DURGAPUR","SILCHAR","KURUKSHETRA","JAIPUR",
+  "ALLAHABAD","BHOPAL","NAGPUR","SURAT","HAMIRPUR","SRINAGAR","JALANDHAR","AGARTALA","RAIPUR","UTTARAKHAND","PUNE","KOLKATA",
+  "MOHALI","THIRUVANANTHAPURAM","TIRUVANANTHAPURAM","BERHAMPUR","BANGALORE","BENGALURU","GWALIOR","JABALPUR","KANCHEEPURAM",
+  "SRI CITY","KOTA","LUCKNOW","KOTTAYAM","RANCHI","SONEPAT","UNA","VADODARA","KALYANI","BHAGALPUR","AHMEDABAD","CALCUTTA",
+  "KOZHIKODE","SHILLONG","UDAIPUR","KASHIPUR","VISAKHAPATNAM","AMRITSAR","BODH GAYA","SAMBALPUR","SIRMAUR","MEGHALAYA","MANIPUR",
+  "MIZORAM","NAGALAND","SIKKIM","ARUNACHAL","PUDUCHERRY","RISHIKESH","RAEBARELI","BIBINAGAR","MANGALAGIRI","BATHINDA","DEOGHAR",
+  "GORAKHPUR","BILASPUR","RAJKOT","MADURAI","VIJAYPUR","KURNOOL","TRIVANDRUM","TIRUCHIRAPALLI","NAGPUR"))
+CITIES <- unique(c(CAMPUS, PLACES, "NOIDA","GREATER","GURGAON","GURUGRAM","PHAGWARA","PRADESH","UTTAR","MADHYA","BENGAL","WEST","NCR",
+  "INDIA","GHAZIABAD","FARIDABAD","MATHURA","MORADABAD","ALIGARH","ERODE","KANCHIPURAM","CHENGALPATTU","VIJAYAWADA","NELLORE",
+  "SECUNDERABAD","HUBLI","BELGAUM","BELAGAVI","UDUPI","MANIPAL","KOCHI","ERNAKULAM","THRISSUR","KOLLAM","NASHIK","NASIK","SANGLI",
+  "SATARA","AKOLA","WARDHA","THANE","NAVI","ANAND","VALLABH","VIDYANAGAR","JAMNAGAR","MEHSANA","SIKAR","ALWAR","BHILWARA","UJJAIN",
+  "SATNA","CUTTACK","SILIGURI","HOWRAH","HOOGHLY","NADIA","BARASAT","ASANSOL","HALDIA","KANGRA","SIRMOUR","KARNAL","PANIPAT",
+  "SONIPAT","RUPNAGAR","PANCHKULA","HARIDWAR","PANTNAGAR","KATHUA","GANGTOK","IMPHAL","AIZAWL","KOHIMA","ITANAGAR","JORHAT",
+  "BOKARO","DURG","CAMPUS","CITY","TOWN","DISTRICT","DIST","PO","PS","TALUK","ROAD","NH"))
+GENERIC <- c("UNIVERSITY","INSTITUTE","COLLEGE","INSTITUTE OF TECHNOLOGY","COLLEGE OF ENGINEERING","ENGINEERING COLLEGE",
+  "INSTITUTE OF ENGINEERING AND TECHNOLOGY","INSTITUTE OF TECHNOLOGY AND MANAGEMENT","COLLEGE OF ENGINEERING AND TECHNOLOGY",
+  "INSTITUTE OF MANAGEMENT","INSTITUTE OF SCIENCE AND TECHNOLOGY","COLLEGE OF PHARMACY","MEDICAL COLLEGE","INSTITUTE OF MEDICAL SCIENCES",
+  "SCHOOL OF ENGINEERING","INSTITUTE OF PHARMACY","INSTITUTE OF PHARMACEUTICAL SCIENCES","DENTAL COLLEGE","COLLEGE OF ENGINEERING AND MANAGEMENT")
+INST_RX <- "^(.*?)\\b(INDIAN INSTITUTE OF TECHNOLOGY|NATIONAL INSTITUTE OF TECHNOLOGY|INDIAN INSTITUTE OF INFORMATION TECHNOLOGY|INDIAN INSTITUTE OF SCIENCE EDUCATION AND RESEARCH|INDIAN INSTITUTE OF MANAGEMENT|ALL INDIA INSTITUTE OF MEDICAL SCIENCES)\\b(.*)$"
+
+strip_prefix <- function(e) str_squish(str_replace(e, PREFIX_RX, ""))
+campus_key <- function(e) {
+  s <- strip_prefix(e); m <- str_match(s, INST_RX)
+  if (is.na(m[1, 1])) return(NA_character_)
+  # campus word: look after the institute name first (IIT DELHI), then before it (MALAVIYA NIT JAIPUR has it after; DR B R AMBEDKAR NIT JALANDHAR too)
+  rest <- c(str_split(str_squish(m[1, 4]), " ")[[1]], rev(str_split(str_squish(m[1, 2]), " ")[[1]]))
+  rest <- rest[nzchar(rest) & !rest %chin% c("OF", "THE", "AND", "DR") & !str_starts(rest, "IIT|NIT|IIIT|IISER|AIIMS|IIM")]
+  key <- "UNSPECIFIED"
+  named <- c("MALAVIYA" = "JAIPUR", "AMBEDKAR" = "JALANDHAR", "VALLABHBHAI" = "SURAT", "MOTILAL" = "ALLAHABAD", "MAULANA" = "BHOPAL",
+             "VISVESVARAYA" = "NAGPUR", "BHU" = "VARANASI", "ISM" = "DHANBAD")   # named NITs / IITs whose city is often omitted
+  for (w in names(named)) if (str_detect(s, paste0("\\b", w, "\\b"))) { key <- named[[w]]; break }
+  if (key == "UNSPECIFIED") for (w in rest) {
+    d <- adist(w, CAMPUS) / pmax(nchar(w), nchar(CAMPUS))
+    if (min(d) <= 0.2 && nchar(w) >= 4) { key <- CAMPUS[which.min(d)]; break }
+  }
+  paste0("CK_", m[1, 3], "_", key)
+}
+canon_name <- function(e) {
+  s <- strip_prefix(e)
+  s <- str_replace_all(s, "\\b(DEEMED TO BE UNIVERSITY|DEEMED UNIVERSITY|DEEMED TO BE A UNIVERSITY)\\b", "UNIVERSITY")
+  s <- str_replace_all(s, "\\b(DEEMED TO BE|DEEMED|A CENTRAL UNIVERSITY|A STATE UNIVERSITY|AN AUTONOMOUS INSTITUTE|AUTONOMOUS)\\b", " ")
+  s <- str_replace(s, "\\b(FORMERLY|ERSTWHILE|EARLIER) (KNOWN AS )?.*$", " ")
+  s <- str_squish(s)
+  m <- str_match(s, "^UNIVERSITY OF ([A-Z]+)$"); if (!is.na(m[1, 2])) s <- paste(m[1, 2], "UNIVERSITY")   # University of X == X University
+  toks <- str_split(s, " ")[[1]]; k <- 0L
+  while (length(toks) > 3 && k < 2L && (toks[length(toks)] %chin% CITIES || grepl("^[0-9]+$", toks[length(toks)]))) {
+    toks <- toks[-length(toks)]; k <- k + 1L
+  }
+  s <- paste(toks, collapse = " ")
+  if (s %chin% GENERIC || nchar(s) < 8) s <- e
+  paste0("NM_", s)
+}
+
+edu_names <- unique(apps[domestic == TRUE & edu == TRUE & !is.na(entity), entity])
+inst_map <- data.table(entity = edu_names)
+inst_map[, stripped := vapply(entity, strip_prefix, character(1))]
+
+# 1. overrides
+ov_path <- here("R", "institution_overrides.csv")
+if (!file.exists(ov_path)) fwrite(data.table(entity = character(), inst_id = character(), tier_override = character(),
+                                             ownership_override = character(), note = character()), ov_path)
+ov <- fread(ov_path, colClasses = "character")[entity != ""]
+for (v in c("inst_id", "tier_override", "ownership_override")) if (!v %chin% names(ov)) ov[, (v) := NA_character_]
+inst_map <- merge(inst_map, ov[, .(entity, ov_id = inst_id, tier_override, ownership_override)], by = "entity", all.x = TRUE)
+inst_map[, inst_id := fifelse(!is.na(ov_id) & ov_id != "", paste0("OV_", ov_id), NA_character_)]
+
+# 2. pattern file (first matching row wins; elite rows come first)
+pat <- fread(here("R", "institution_patterns.csv"), colClasses = "character")
+inst_map[, `:=`(pat_id = NA_character_, pat_tier = NA_character_, pat_own = NA_character_)]
+for (i in seq_len(nrow(pat))) {
+  hit <- is.na(inst_map$pat_id) & str_detect(inst_map$stripped, pat$regex[i])
+  if (any(hit)) inst_map[hit, `:=`(pat_id = pat$inst_id[i], pat_tier = pat$tier[i], pat_own = pat$ownership[i])]
+}
+inst_map[is.na(inst_id) & !is.na(pat_id), inst_id := pat_id]
+# 3. INI campus key, 4. canonical name
+inst_map[is.na(inst_id), inst_id := vapply(entity, campus_key, character(1))]
+inst_map[is.na(inst_id), inst_id := vapply(entity, canon_name, character(1))]
+
+# UGC list of universities (R/ugc_match.csv: institution ids matched by hand to the UGC consolidated list; use_ugc = accepted match).
+# UGC type gives ownership directly: Central / State / Private; "Deemed to be" universities are private unless the pattern file says otherwise.
+ugc_path <- here("R", "ugc_match.csv")
+if (file.exists(ugc_path)) {
+  ugc <- fread(ugc_path, colClasses = "character")[tolower(use_ugc) %chin% c("true", "1", "yes")]
+  ugc[, ugc_own := fcase(ugc_type == "Central", "central", ugc_type == "State", "state", rep(TRUE, .N), "private")]
+  inst_map <- merge(inst_map, unique(ugc[, .(inst_id, ugc_own, ugc_type)], by = "inst_id"), by = "inst_id", all.x = TRUE)
+} else inst_map[, `:=`(ugc_own = NA_character_, ugc_type = NA_character_)]
+
+# tier and ownership
+inst_map[, is_ini := str_detect(stripped, rx_ini)]
+inst_map[, is_elite := (!is.na(pat_tier) & pat_tier == "elite") | is_ini]
+rx_central <- paste("CENTRAL UNIVERSITY", "CENTRAL AGRICULTURAL", "CENTRAL INSTITUTE", "CENTRAL SANSKRIT", "RASHTRIYA SANSKRIT", "NATIONAL INSTITUTE OF (DESIGN|FASHION|TECHNICAL TEACHERS|FOUNDRY)",
+                     "INDIAN INSTITUTE OF (SCIENCE|ENGINEERING SCIENCE|SPACE|PETROLEUM|FOREIGN TRADE|TEACHER)", "NATIONAL LAW UNIVERSITY DELHI", "ENGLISH AND FOREIGN LANGUAGES",
+                     "INDIRA GANDHI NATIONAL", "NATIONAL DAIRY RESEARCH", "SANT LONGOWAL", "ATAL BIHARI VAJPAYEE INDIAN INSTITUTE", "\\bABV IIITM\\b", "RAJIV GANDHI INSTITUTE OF PETROLEUM",
+                     "NATIONAL INSTITUTE OF PHARMACEUTICAL", "INDIAN MARITIME", "FOOTWEAR DESIGN", "SCHOOL OF PLANNING AND ARCHITECTURE", sep = "|")
+inst_map[, ownership := fcase(!is.na(pat_own) & pat_own != "", pat_own,
+                              !is.na(ugc_own),                       ugc_own,
+                              is_ini,                                "central",
+                              str_detect(stripped, rx_central),      "central",
+                              str_detect(stripped, rx_public),       "state",
+                              str_detect(stripped, rx_private),      "private",
+                              str_detect(stripped, rx_place_univ),   "state",
+                              rep(TRUE, .N),                         "private")]   # unlisted universities, institutes and colleges
+# tier = elite (SIR 2010 / INI, any ownership) or, for the rest, the ownership; `elite` kept as its own flag
+inst_map[, tier := fifelse(is_elite, "elite", ownership)]   # reviewed 5 Nov: schools, polytechnics, colleges all private
+inst_map[!is.na(tier_override) & tier_override != "", tier := tier_override]
+inst_map[!is.na(ownership_override) & ownership_override != "", ownership := ownership_override]
+inst_map[, matched_by := fcase(!is.na(ov_id) & ov_id != "", "override", !is.na(pat_id), "pattern file", str_starts(inst_id, "CK_"), "campus key",
+                               rep(TRUE, .N), "canonical name")]
+inst_map[, ownership_source := fcase(!is.na(ownership_override) & ownership_override != "", "override", !is.na(pat_own) & pat_own != "", "pattern file",
+                                     !is.na(ugc_own), "UGC list", rep(TRUE, .N), "name rule")]
+inst_map[, elite := as.integer(is_elite)]
+inst_map[, class_name := paste0("edu_", tier)]
+
+apps <- merge(apps, inst_map[, .(entity, inst_id, tier, ownership, elite, class_name, matched_by)], by = "entity", all.x = TRUE, sort = FALSE)
+apps[is.na(inst_id) & !is.na(entity), `:=`(inst_id = entity, class_name = sector)]   # non-education: one unit per name
+apps[is.na(ownership), ownership := fifelse(sector == "firm", "firm", sector)]
+apps[is.na(tier), tier := ownership]
+apps[is.na(elite), elite := 0L]
+# the institution's tier / ownership is that of its largest name
+inst_cls <- apps[domestic == TRUE & !is.na(inst_id), .N, by = .(inst_id, class_name, tier, ownership, elite)][order(inst_id, -N)][
+  , .(class = class_name[1], inst_tier = tier[1], inst_ownership = ownership[1], inst_elite = elite[1]), by = inst_id]
+apps <- merge(apps, inst_cls, by = "inst_id", all.x = TRUE, sort = FALSE)
+
+cat("domestic educational names:", length(edu_names), "-> institutions:", uniqueN(inst_map$inst_id),
+    "| names in multi-name institutions:", inst_map[, .N, by = inst_id][N > 1, sum(N)], "\n")
+kable(inst_map[, .(names = .N, institutions = uniqueN(inst_id)), by = .(elite, ownership)][order(-elite, ownership)])
+kable(inst_map[, .N, by = matched_by][order(-N)])
+kable(inst_map[, .(names = .N, institutions = uniqueN(inst_id)), by = ownership_source][order(-names)], caption = "Where ownership came from")
+if (file.exists(ugc_path)) kable(dcast(inst_map[!is.na(ugc_type), .N, by = .(ugc_type, ownership)], ugc_type ~ ownership, value.var = "N", fill = 0L),
+                                 caption = "UGC type vs final ownership (pattern-file ownership wins for deemed universities that are publicly run)")
+```
+
+# 7. Review tables (hand verification)
+
+Written to `output/review/`. Decisions go in `R/institution_overrides.csv` (columns `entity`, `inst_id`, `tier_override`, `ownership_override`, `note`) or as new rows in `R/institution_patterns.csv`; re-knit and they apply.
+
+-   `review_top_names_by_class.csv`: the 100 largest domestic names per class.
+-   `review_elite.csv`: every name in the elite tier with what matched it.
+-   `review_state.csv`: every name in the state tier (public, not elite).
+-   `review_edu_unmatched.csv`: educational names that hit neither the pattern file nor the campus key, largest first: these were classified by generic words only, so they are where the errors are.
+-   `review_class_conflicts.csv`: names whose rows disagreed on sector.
+-   `review_multi_name_institutions.csv`: institutions that absorbed more than one name.
+-   `review_singleton_edu_names.csv`: names sharing a three-word stem with another unit.
+-   `validation_sample.csv`: 50 random applications per class, pre and post 2015, blank `true_class`.
+
+```{r review}
+dom <- apps[domestic == TRUE & !is.na(entity)]
+by_name <- dom[, .(n_apps = .N, first_year = min(filing_year, na.rm = TRUE), last_year = max(filing_year, na.rm = TRUE),
+                   n_states = uniqueN(app1_state), state = mode_chr(app1_state), example_raw = applicant1_name[1]),
+               by = .(class_name, tier, ownership, matched_by, entity, inst_id)]
+fwrite(by_name[order(class_name, -n_apps), head(.SD, 100), by = class_name], here("output", "review", "review_top_names_by_class.csv"))
+fwrite(by_name[tier == "elite"][order(inst_id, -n_apps)], here("output", "review", "review_elite.csv"))
+fwrite(by_name[tier == "state"][order(inst_id, -n_apps)], here("output", "review", "review_state.csv"))
+fwrite(by_name[entity %chin% edu_names & matched_by == "canonical name"][order(-n_apps)], here("output", "review", "review_edu_unmatched.csv"))
+conf <- sec_tab[entity %chin% dom[class_conflict == TRUE, unique(entity)]]
+conf <- dcast(conf, entity ~ sector_row, value.var = "N", fill = 0L)
+fwrite(merge(conf, sec_name[, .(entity, sector)], by = "entity")[order(sector)], here("output", "review", "review_class_conflicts.csv"))
+multi <- by_name[entity %chin% edu_names][, if (.N > 1) .SD, by = inst_id]
+fwrite(multi[order(inst_id, -n_apps)], here("output", "review", "review_multi_name_institutions.csv"))
+single <- by_name[entity %chin% edu_names]; single[, stem := word(entity, 1, 3)]
+fwrite(single[, if (uniqueN(inst_id) > 1) .SD, by = stem][order(stem, -n_apps)], here("output", "review", "review_singleton_edu_names.csv"))
+set.seed(20261105)
+val <- dom[!is.na(filing_year) & filing_year >= 2005,
+           .SD[sample(.N, min(.N, 50))], by = .(class_name, post = filing_year >= nirf_year),
+           .SDcols = c("application_number", "applicant1_name", "applicant1_state", "filing_year", "inst_id")]
+val[, true_class := ""]
+fwrite(val[order(class_name, post)], here("output", "review", "validation_sample.csv"))
+
+kable(by_name[entity %chin% edu_names][order(-n_apps)][1:30, .(class_name, entity, inst_id, matched_by, n_apps)], caption = "30 largest domestic educational names")
+kable(multi[, .N, by = inst_id][order(-N)][1:15], caption = "Institutions absorbing the most names")
+```
+
+# 8. Truncation
+
+```{r truncation}
+qc_lag <- apps[granted & !is.na(grant_lag_days) & filing_year >= 2005,
+  .(n_granted = .N, p50_years = quantile(grant_lag_days, .5) / 365.25, p90_years = quantile(grant_lag_days, .9) / 365.25,
+    max_possible = as.numeric(extract_d - as.Date(paste0(filing_year[1], "-07-01"))) / 365.25), by = filing_year][order(filing_year)]
+grant_safe_max_year <- qc_lag[p90_years < max_possible - 1, max(filing_year)]
+kable(qc_lag, digits = 2)
+cat("grant outcomes usable through filing year:", grant_safe_max_year, "| filing counts complete through:", pub_complete_year, "\n")
+```
+
+# 9. Unit attributes
+
+One row per institution. Startups (IPO grantee type STARTUP on any granted application) are flagged so firm controls can exclude them.
+
+```{r units}
+ut <- apps[domestic == TRUE & !is.na(inst_id),
+  .(class = class[1], tier = inst_tier[1], ownership = inst_ownership[1], elite = inst_elite[1], n_names = uniqueN(entity), main_name = mode_chr(entity),
+    state = mode_chr(app1_state), first_filing_year = min(filing_year, na.rm = TRUE), n_filings_ever = .N, n_granted_ever = sum(granted),
+    grantee_type = mode_chr(er_grantee1_grantee_type), class_conflict_any = any(class_conflict)),
+  by = inst_id]
+ut[, startup := !is.na(grantee_type) & str_detect(toupper(grantee_type), "START")]
+ut[class == "govt_lab_psu", `:=`(tier = "govt_lab", ownership = "govt_lab", elite = 0L)]
+ut[class == "firm", `:=`(tier = "firm", ownership = "firm", elite = 0L)]
+ut[, group := fcase(tier == "elite", "Elite (SIR 2010 / INI)", tier == "central", "Central, non-elite", tier == "state", "State, non-elite", tier == "private", "Private, non-elite",
+                    class == "govt_lab_psu", "Government lab / PSU (control)", class == "firm" & !startup, "Domestic firm (control)",
+                    class == "firm" & startup, "Startup firm (excluded)", rep(TRUE, .N), class)]
+kable(ut[, .(units = .N, filings = sum(n_filings_ever), startups = sum(startup)), by = .(group, ownership)][order(-filings)])
+fwrite(ut, here("data", "unit_attributes.csv"))
+```
+
+# 10. Panel
+
+Balanced institution x year, `r params$year_min`-`r params$year_max`, domestic units in the three education tiers, government labs / PSUs and firms. Outcome columns: `filings` (by filing year), `granted` and `granted_within_4y` (by filing cohort), `grants_in_year` (patents granted in that year, by grant date), plus early publication, lapse, inventors, co-applicants, foreign priority. Years before a unit's first filing are zeros. Dummies: `treat` (education), `post` (year \>= `r nirf_year`), `treat_post`, `rel_year` (year - `r nirf_year - 1`), `post_fee`. Group columns for the three cuts: `treat`; `ownership` (public / private / firm); `tier` (elite / state / private / govt_lab / firm). `treat` is 0 for both control groups; `class` tells them apart. Elite spans both ownerships, so the ownership cut and the tier cut overlap by design.
+
+```{r panel}
+keep_cls <- c("edu_elite", "edu_central", "edu_state", "edu_private", "govt_lab_psu", "firm")
+A <- apps[domestic == TRUE & !is.na(inst_id) & class %chin% keep_cls & !is.na(filing_year) & filing_year %in% YEARS]
+yr <- A[, .(filings = .N, granted = sum(granted), granted_within_4y = sum(granted_within_4y),
+            early_pub = sum(early_pub, na.rm = TRUE), lapsed = sum(lapsed), inventors = sum(n_inventors),
+            co_applicant = sum(n_applicants > 1), foreign_priority = sum(!is.na(priority_country) & priority_country != "India")),
+        by = .(inst_id, year = filing_year)]
+# grants dated by grant year (the e-register date), as a second outcome series: patents obtained in year t, whatever the filing cohort
+gy <- apps[domestic == TRUE & !is.na(inst_id) & class %chin% keep_cls & granted & !is.na(grant_date) & year(grant_date) %in% YEARS,
+           .(grants_in_year = .N), by = .(inst_id, year = year(grant_date))]
+yr <- merge(yr, gy, by = c("inst_id", "year"), all = TRUE)
+units <- ut[class %chin% keep_cls, .(inst_id, class, tier, ownership, elite, group, state, startup, first_filing_year)]
+panel <- CJ(inst_id = units$inst_id, year = YEARS)
+panel <- merge(panel, units, by = "inst_id")
+panel <- merge(panel, yr, by = c("inst_id", "year"), all.x = TRUE)
+for (v in setdiff(names(yr), c("inst_id", "year"))) set(panel, which(is.na(panel[[v]])), v, 0L)
+panel[, treat := as.integer(str_starts(class, "edu_"))]
+panel[, post := as.integer(year >= nirf_year)]
+panel[, treat_post := treat * post]
+panel[, rel_year := year - (nirf_year - 1L)]
+panel[, post_fee := as.integer(year > fee_year)]
+panel[, filings_complete := year <= pub_complete_year]
+panel[, grants_usable := year <= grant_safe_max_year]
+setcolorder(panel, c("inst_id", "group", "class", "tier", "ownership", "elite", "state", "startup", "first_filing_year", "year", "rel_year", "treat", "post", "treat_post", "post_fee"))
+setorder(panel, inst_id, year)
+cat("panel:", nrow(panel), "rows |", uniqueN(panel$inst_id), "units x", length(YEARS), "years | balanced:", panel[, .N, by = inst_id][, uniqueN(N) == 1], "\n")
+kable(panel[year <= pub_complete_year, .(units = uniqueN(inst_id), filings = sum(filings), granted_by_cohort = sum(granted), grants_in_year = sum(grants_in_year),
+                                         pre_mean = mean(filings[post == 0]), post_mean = mean(filings[post == 1])), by = .(group, ownership)][order(-filings)], digits = 3)
+kable(panel[inst_id == panel[ownership == "private"][which.max(filings), inst_id] & year %between% c(2012, 2017),
+            .(inst_id, group, year, rel_year, treat, post, treat_post, filings, granted)], caption = "Example rows: largest private university")
+kable(panel[inst_id == panel[group == "Domestic firm (control)"][which.max(filings), inst_id] & year %between% c(2012, 2017),
+            .(inst_id, group, year, rel_year, treat, post, treat_post, filings, granted)], caption = "Example rows: largest domestic firm")
+
+saveRDS(panel, here("data", "panel_inst_year.rds")); fwrite(panel, here("data", "panel_inst_year.csv.gz"))
+slim <- apps[, .(application_number, filing_date, filing_year, publication_date = publication_date_d, grant_date, granted,
+                 granted_within_4y, g4_observable, grant_lag_days, pub_lag_days, early_pub, lapsed, priority_country,
+                 field_of_invention, ipc_section, classification_ipc, invention_title, n_inventors, n_applicants,
+                 applicant1_name, entity, inst_id, sector, class_name, class, tier = inst_tier, ownership = inst_ownership, elite = inst_elite,
+                 class_conflict, domestic, app1_state, er_legal_status, er_type_of_application, er_grantee1_grantee_type,
+                 rfe_date = as_request_for_examination_date_d, fer_date = as_first_examination_report_date_d,
+                 fer_reply_date = as_reply_to_fer_date_d, next_renewal_due = er_due_date_of_next_renewal_d)]
+saveRDS(slim, here("data", "applications.rds"))
+writeLines(c(paste("built:", Sys.time()), paste("applications:", nrow(apps)), paste("panel units:", uniqueN(panel$inst_id)),
+             paste("years:", params$year_min, "-", params$year_max), paste("filings complete through:", pub_complete_year),
+             paste("grant outcomes usable through:", grant_safe_max_year), paste("nirf_year:", nirf_year, "| base year:", nirf_year - 1),
+             "classification: regex sector + modal sector per name; tier/ownership from R/institution_patterns.csv (SCImago 2010 + manual) and rules; overrides in R/institution_overrides.csv"),
+           here("data", "README_panel.txt"))
+```
+
+# 11. Simple DiD, three cuts (wiring check only; estimation is in 02_did_nirf.Rmd)
+
+Filings per institution-year, 2005-2020, two-way fixed effects, SE clustered by institution, control = domestic firms minus startups.
+
+```{r did}
+if (requireNamespace("fixest", quietly = TRUE)) {
+  library(fixest)
+  d <- panel[year <= 2020 & class %chin% c("edu_elite", "edu_central", "edu_state", "edu_private", "firm") & group != "Startup firm (excluded)"]
+  cuts <- list(
+    list(level = "1. all", label = "All universities",   sel = quote(treat == 1)),
+    list(level = "2. ownership", label = "Central",      sel = quote(treat == 1 & ownership == "central")),
+    list(level = "2. ownership", label = "State",        sel = quote(treat == 1 & ownership == "state")),
+    list(level = "2. ownership", label = "Private",      sel = quote(treat == 1 & ownership == "private")),
+    list(level = "3. capacity", label = "Elite",         sel = quote(elite == 1)),
+    list(level = "3. capacity", label = "Non-elite",     sel = quote(treat == 1 & elite == 0)))
+  res <- rbindlist(lapply(cuts, function(cc) {
+    s <- d[eval(cc$sel) | class == "firm"]
+    m <- s[, .(mean = mean(filings)), by = .(treat, post)]
+    did22 <- (m[treat == 1 & post == 1, mean] - m[treat == 1 & post == 0, mean]) - (m[treat == 0 & post == 1, mean] - m[treat == 0 & post == 0, mean])
+    f <- feols(filings ~ treat_post | inst_id + year, data = s, cluster = ~inst_id)
+    data.table(level = cc$level, group = cc$label, n_treated = s[treat == 1, uniqueN(inst_id)], n_control = s[treat == 0, uniqueN(inst_id)],
+               treated_pre = m[treat == 1 & post == 0, mean], control_pre = m[treat == 0 & post == 0, mean],
+               did_2x2 = did22, twfe = coef(f)[["treat_post"]], se = se(f)[["treat_post"]], p = pvalue(f)[["treat_post"]])
+  }))
+  res[, stars := fcase(p < 0.001, "***", p < 0.01, "**", p < 0.05, "*", rep(TRUE, .N), "")]
+  kable(res, digits = 3)
+  fwrite(res, here("output", "did_simple_nirf2015.csv"))
+} else cat("fixest not installed; skipping the DiD check\n")
+```

@@ -1,0 +1,550 @@
+---
+title: "02. NIRF 2015: difference-in-differences, universities vs domestic firms"
+author: "Sonali Singh"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    code_folding: show
+params:
+  year_min: 2005
+  year_max: 2020          # estimation window for the NIRF design
+  nirf_year: 2015         # first exposed filing year; base year is nirf_year - 1
+  n_boot: 20              # bootstrap draws over institutions (TWFE, SDID, trajectory balancing); set to 20 for a quick run
+  alpha_pre: 0.05         # pre-trend label: pass if the linear pre-slope is not different from zero at this level; the joint Wald on the leads is the strict secondary test
+  n_cores: 0              # worker processes for the bootstraps and the estimator section; 0 = all cores but one
+---
+
+Input: `data/panel_inst_year.rds` and `data/applications.rds` from notebook 01.
+Output: tables in `output/tables/`, figures in `output/figures/`.
+
+Design. Treated: Indian educational institutions (first exposed filing year
+`r params$nirf_year`; `r params$nirf_year - 1` is the base year, since the
+first NIRF edition scored FY 2012-13 to 2014-15 and any late-2015 step is
+anticipation). Control: domestic firms, startups removed. Outcome: patent
+filings per university-year, zeros filled. Balanced panel
+`r params$year_min`-`r params$year_max`. Cuts of the treated group: all
+universities; ownership (central / state / private); pre-treatment capacity
+(elite = SCImago Institutions Ranking 2010 or INI, vs non-elite); their
+interaction. Two samples: full (every institution ever in the patent
+universe) and pre-2015 filers.
+
+Estimators. TWFE is the headline; synthetic DiD (Arkhangelsky et al. 2021)
+and trajectory balancing (Hazlett and Xu 2018) reweight firms to match the
+university pre-path. Inference: SE clustered by institution and a bootstrap
+over institutions (`r params$n_boot` draws). Pre-trends: pass/fail at `r params$alpha_pre` on the
+linear pre-slope (no differential trend), with the joint Wald on all leads
+reported as the strict version, then Rambachan-Roth (2023)
+sensitivity for the groups with a significant TWFE effect. With one treated
+sector and one date, clustered SEs overstate precision; section 9 gives the
+placebo permutation p-values.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 10, fig.height = 6)
+suppressPackageStartupMessages({
+  library(here); library(data.table); library(stringr); library(fixest); library(ggplot2); library(knitr)
+})
+setDTthreads(0)
+has_sdid  <- requireNamespace("synthdid", quietly = TRUE)    # remotes::install_github("synth-inference/synthdid")
+has_hdid  <- requireNamespace("HonestDiD", quietly = TRUE)   # install.packages("HonestDiD")
+cat("synthdid:", has_sdid, "| HonestDiD:", has_hdid, "| tjbal results present:", file.exists(here("output", "tables", "t8b_tjbal.csv")), "\n")
+dir.create(here("output", "tables"), showWarnings = FALSE, recursive = TRUE)
+dir.create(here("output", "figures"), showWarnings = FALSE, recursive = TRUE)
+theme_set(theme_minimal(base_size = 11))
+Y0 <- params$year_min; Y1 <- params$year_max; T0 <- params$nirf_year; BASE <- T0 - 1L; NB <- params$n_boot
+NC <- if (params$n_cores > 0) params$n_cores else max(1L, parallel::detectCores() - 1L)
+if (.Platform$OS.type == "windows") NC <- 1L          # mclapply forks; on Windows everything runs serially
+setFixest_nthreads(1)                                 # one thread per worker; the parallelism is across draws and cuts
+YEARS <- Y0:Y1; n_pre <- sum(YEARS < T0); n_post <- sum(YEARS >= T0)
+
+panel <- readRDS(here("data", "panel_inst_year.rds"))
+apps  <- readRDS(here("data", "applications.rds"))
+stars <- function(p) fcase(is.na(p), "", p < 0.001, "***", p < 0.01, "**", p < 0.05, "*", rep(TRUE, length(p)), "")
+gridExtra_safe <- function(a, b) if (requireNamespace("patchwork", quietly = TRUE)) patchwork::wrap_plots(a, b) else a   # two panels side by side when patchwork is installed
+
+d <- panel[year %between% c(Y0, Y1) & class %chin% c("edu_elite", "edu_central", "edu_state", "edu_private", "firm") & group != "Startup firm (excluded)"]
+d[, `:=`(post = as.integer(year >= T0), rel_year = year - BASE)]
+d[, treat_post := treat * post]
+d_inc <- d[first_filing_year < T0]                      # pre-2015 filers: filed at least once before the shock (both sides)
+
+cuts <- list(
+  list(level = "1. all",         label = "All universities",   sel = quote(treat == 1)),
+  list(level = "2. ownership",   label = "Central",            sel = quote(treat == 1 & ownership == "central")),
+  list(level = "2. ownership",   label = "State",              sel = quote(treat == 1 & ownership == "state")),
+  list(level = "2. ownership",   label = "Private",            sel = quote(treat == 1 & ownership == "private")),
+  list(level = "3. capacity",    label = "Elite (SIR 2010)",   sel = quote(elite == 1)),
+  list(level = "3. capacity",    label = "Non-elite",          sel = quote(treat == 1 & elite == 0)),
+  list(level = "4. interaction", label = "Elite public",       sel = quote(elite == 1 & ownership %chin% c("central", "state"))),
+  list(level = "4. interaction", label = "Elite private",      sel = quote(elite == 1 & ownership == "private")),
+  list(level = "4. interaction", label = "Non-elite central",  sel = quote(treat == 1 & elite == 0 & ownership == "central")),
+  list(level = "4. interaction", label = "Non-elite state",    sel = quote(treat == 1 & elite == 0 & ownership == "state")),
+  list(level = "4. interaction", label = "Non-elite private",  sel = quote(treat == 1 & elite == 0 & ownership == "private")))
+cut_labels <- sapply(cuts, `[[`, "label")
+pick <- function(labels) cuts[cut_labels %chin% labels]
+MAIN <- c("All universities", "Central", "State", "Private", "Elite (SIR 2010)", "Non-elite")
+sub_cut <- function(dd, cc) dd[eval(cc$sel) | class == "firm"]
+enough <- function(s, k = 5) s[treat == 1, uniqueN(inst_id)] >= k & s[treat == 0, uniqueN(inst_id)] >= k
+
+# cluster bootstrap over universities and firms for a TWFE ATT
+boot_twfe <- function(s, R = NB, seed = 20261105) {
+  if (R <= 0 || s[treat == 1, uniqueN(inst_id)] < 10) return(NA_real_)   # too few treated units for a resample to carry the interaction
+  set.seed(seed); ids <- unique(s$inst_id); W <- s[, .(inst_id, year, filings, treat_post)]
+  draws <- lapply(seq_len(R), function(r) sample(ids, replace = TRUE))   # draw the resamples first so the seed governs them, then fit in parallel
+  b <- unlist(parallel::mclapply(draws, function(dr) {
+    pick <- data.table(inst_id = dr)[, bid := .I]
+    sb <- merge(pick, W, by = "inst_id", allow.cartesian = TRUE)
+    tryCatch(coef(feols(filings ~ treat_post | bid + year, data = sb))[["treat_post"]], error = function(e) NA_real_)  # a draw with no treated units
+  }, mc.cores = NC))
+  if (sum(!is.na(b)) < R / 2) return(NA_real_)
+  sd(b, na.rm = TRUE)
+}
+cat("units:", uniqueN(d$inst_id), "| universities:", d[treat == 1, uniqueN(inst_id)], "| firms:", d[treat == 0, uniqueN(inst_id)],
+    "| years:", Y0, "-", Y1, "| base year:", BASE, "| bootstrap draws:", NB, "| workers:", NC, "\n")
+```
+
+# 1. Sample
+
+```{r sample}
+smp <- d[, .(units = uniqueN(inst_id), pre2015_filers = uniqueN(inst_id[first_filing_year < T0]),
+             filings = sum(filings), pre_mean = mean(filings[post == 0]), post_mean = mean(filings[post == 1]),
+             share_zero_pre = mean(filings[post == 0] == 0)), by = .(group, elite, ownership)][order(-filings)]
+kable(smp, digits = 3)
+fwrite(smp, here("output", "tables", "t0_sample.csv"))
+```
+
+# 2. Table 1: TWFE difference-in-differences (main specification), full sample and pre-2015 filers
+
+$y_{it} = \alpha_i + \gamma_t + \beta\,(\text{Univ}_i \times \text{Post}_t) + \varepsilon_{it}$,
+filings per university-year. `se` is clustered by institution; `se_boot` is the
+bootstrap over universities and firms.
+
+```{r table1}
+fit_twfe <- function(s, label, level, sample, boot = TRUE) {
+  if (!enough(s, 2)) return(data.table(level = level, group = label, sample = sample, n_universities = s[treat == 1, uniqueN(inst_id)]))
+  m <- s[, .(mean = mean(filings)), by = .(treat, post)]
+  f <- tryCatch(feols(filings ~ treat_post | inst_id + year, data = s, cluster = ~inst_id), error = function(e) NULL)
+  if (is.null(f)) return(data.table(level = level, group = label, sample = sample, n_universities = s[treat == 1, uniqueN(inst_id)]))
+  data.table(level = level, group = label, sample = sample,
+             n_universities = s[treat == 1, uniqueN(inst_id)], n_firms = s[treat == 0, uniqueN(inst_id)],
+             univ_pre_mean = m[treat == 1 & post == 0, mean], univ_post_mean = m[treat == 1 & post == 1, mean],
+             firm_pre_mean = m[treat == 0 & post == 0, mean], firm_post_mean = m[treat == 0 & post == 1, mean],
+             att = coef(f)[["treat_post"]], se = se(f)[["treat_post"]], p = pvalue(f)[["treat_post"]],
+             se_boot = if (boot) boot_twfe(s) else NA_real_,
+             att_over_pre = coef(f)[["treat_post"]] / m[treat == 1 & post == 0, mean], n_obs = nobs(f))
+}
+t1 <- rbindlist(c(lapply(cuts, function(cc) fit_twfe(sub_cut(d, cc), cc$label, cc$level, "full")),
+                  lapply(cuts, function(cc) fit_twfe(sub_cut(d_inc, cc), cc$label, cc$level, "pre-2015 filers"))), fill = TRUE)
+t1[, stars := stars(p)]
+t1[, p_boot := 2 * pnorm(-abs(att / se_boot))]
+t1[sample == "full", share_pre2015_filers := t1[sample == "pre-2015 filers"][.SD, on = "group", n_universities] / n_universities]
+kable(t1[, .(level, group, sample, n_universities, n_firms, univ_pre_mean, firm_pre_mean, att, se, stars, se_boot, p_boot, att_over_pre)], digits = 3)
+fwrite(t1, here("output", "tables", "t1_twfe.csv"))
+```
+
+# 3. Event study and pre-trend tests
+
+Leads and lags relative to `r BASE`. Two pre-trend tests. The headline test,
+and the label in the figure titles, is the slope of a linear differential
+pre-trend fitted through the lead coefficients (GLS with their covariance):
+pass if the slope is not different from zero at `r params$alpha_pre`, i.e. no
+differential trend before 2015. The strict test is the joint Wald that all
+leads `r Y0`-`r BASE - 1` are zero; with 14,000 units it also rejects a level
+gap of a few hundredths of a filing, so it is reported beside the slope test
+rather than used as the label.
+
+```{r event, fig.width = 12, fig.height = 9}
+es_one <- function(s, label, sample) {
+  if (!enough(s)) return(NULL)
+  f <- tryCatch(feols(filings ~ i(rel_year, treat, ref = 0) | inst_id + year, data = s, cluster = ~inst_id), error = function(e) NULL)
+  if (is.null(f)) return(NULL)
+  ct <- as.data.table(coeftable(f), keep.rownames = "term"); setnames(ct, c("term", "coef", "se", "t", "p"))
+  ct[, rel_year := as.integer(str_match(term, "rel_year::(-?[0-9]+)")[, 2])]
+  setorder(ct, rel_year)
+  leads <- ct[rel_year < 0]
+  w <- wald(f, keep = "rel_year::-", print = FALSE)
+  V <- vcov(f)[leads$term, leads$term]; X <- cbind(1, leads$rel_year); Vi <- solve(V)
+  bt <- solve(t(X) %*% Vi %*% X, t(X) %*% Vi %*% leads$coef); bse <- sqrt(solve(t(X) %*% Vi %*% X)[2, 2])
+  ct[, .(group = label, sample = sample, term, rel_year, year = rel_year + BASE, coef, se, p, wald_leads_p = w$p,
+         pretrend_slope = bt[2], pretrend_slope_se = bse, n_universities = s[treat == 1, uniqueN(inst_id)])]
+}
+es_models <- list()   # keep the fitted vcov for HonestDiD
+es <- rbindlist(lapply(cuts, function(cc) rbind(es_one(sub_cut(d, cc), cc$label, "full"), es_one(sub_cut(d_inc, cc), cc$label, "pre-2015 filers"))))
+# two tests: the linear pre-slope (pass = slope not different from zero at 5%: no differential trend) is the label used in the figures;
+# the joint Wald on all leads (pass = p >= alpha_pre) is the strict version, which also rejects small level gaps, and is reported beside it
+es[, pretrend_slope_p := 2 * pnorm(-abs(pretrend_slope / pretrend_slope_se))]
+es[, pretrend := fifelse(pretrend_slope_p >= params$alpha_pre, "pass", "fail")]
+es[, pretrend_wald := fifelse(wald_leads_p >= params$alpha_pre, "pass", "fail")]
+fwrite(es, here("output", "tables", "t2_event_study.csv"))
+pre <- unique(es[, .(group, sample, n_universities, pretrend_slope, pretrend_slope_se, pretrend_slope_p, pretrend, wald_leads_p, pretrend_wald)])
+kable(pre, digits = 3, caption = paste0("Pre-trend tests: pretrend = linear pre-slope test (no differential trend); pretrend_wald = joint test on all leads (strict), both at ", params$alpha_pre))
+fwrite(pre, here("output", "tables", "t2b_pretrend_tests.csv"))
+dyn <- dcast(es[sample == "full" & rel_year > 0], year ~ group, value.var = "coef")
+setcolorder(dyn, c("year", intersect(cut_labels, names(dyn))))
+kable(dyn, digits = 3, caption = "Dynamic ATT by year, full sample")
+fwrite(dyn, here("output", "tables", "t2c_dynamic_att.csv"))
+
+es[, grp := factor(group, levels = cut_labels)]
+pdat <- rbind(es, unique(es[, .(group, sample, grp, pretrend)])[, .(rel_year = 0L, year = BASE, coef = 0, se = 0), by = .(group, sample, grp, pretrend)], fill = TRUE)
+pdat[, panel_lab := factor(paste0(group, "  [pre-trend ", pretrend, "]"), levels = unique(paste0(cut_labels, "  [pre-trend ", pre[sample == "full"][match(cut_labels, group), pretrend], "]")))]
+es_plot <- function(dd, ttl) ggplot(dd, aes(year, coef)) +
+  geom_hline(yintercept = 0, colour = "grey50") + geom_vline(xintercept = T0 - 0.5, linetype = 2, colour = "grey50") +
+  geom_ribbon(aes(ymin = coef - 1.96 * se, ymax = coef + 1.96 * se), alpha = 0.15, fill = "#1f3b73") +
+  geom_line(colour = "#1f3b73") + geom_point(size = 1, colour = "#1f3b73") + facet_wrap(~ panel_lab, scales = "free_y", ncol = 4) +
+  labs(x = NULL, y = paste("Filings per university-year, relative to firms and to", BASE), title = ttl, subtitle = "95% bands, SE clustered by university")
+g <- es_plot(pdat[sample == "full"], "Event study: universities vs domestic firms (no startups), full sample")
+print(g); ggsave(here("output", "figures", "fig_event_study.png"), g, width = 12, height = 9, dpi = 200, bg = "white")
+# pre-2015 filers: supplementary figure only
+pdat_inc <- pdat[sample == "pre-2015 filers"]
+pdat_inc[, panel_lab := factor(paste0(group, "  [pre-trend ", pretrend, "]"))]
+g_inc <- es_plot(pdat_inc, "Event study, pre-2015 filers (supplementary)")
+ggsave(here("output", "figures", "fig_event_study_pre2015_filers.png"), g_inc, width = 12, height = 9, dpi = 200, bg = "white")
+```
+
+# 4. Raw means
+
+```{r means, fig.height = 5}
+d[, grp_plot := fcase(treat == 0, "Domestic firms", elite == 1, "Elite (SIR 2010)", ownership == "central", "Central, non-elite",
+                      ownership == "state", "State, non-elite", default = "Private, non-elite")]
+mm <- d[, .(mean = mean(filings)), by = .(year, grp = grp_plot)]
+g2 <- ggplot(mm, aes(year, mean, colour = grp)) + geom_line() + geom_point(size = 1) + geom_vline(xintercept = T0 - 0.5, linetype = 2, colour = "grey50") +
+  scale_y_log10() + labs(x = NULL, y = "Mean filings per university-year (log scale)", colour = NULL, title = "Raw group means") + theme(legend.position = "bottom")
+print(g2); ggsave(here("output", "figures", "fig_raw_means.png"), g2, width = 9, height = 5, dpi = 200, bg = "white")
+fwrite(dcast(mm, year ~ grp, value.var = "mean"), here("output", "tables", "t3_raw_means.csv"))
+```
+
+# 5. Three estimators: TWFE (main), synthetic DiD and trajectory balancing (supportive)
+
+Full sample, every cut, two outcomes (filings; filings later granted). TWFE
+is the main DiD specification (Table 1); SDID and trajectory balancing are
+reported as supportive estimators that relax parallel trends by reweighting.
+Synthetic DiD (`synthdid`) chooses unit weights on firms and time weights on
+pre-years so the weighted firm path matches the university path; trajectory
+balancing (`tjbal`, mean balancing on the demeaned pre-period outcomes,
+computed in `03_tjbal.Rmd` because it is slow) reweights firms to match the
+university pre-trajectory. Both anchor on the pre-path, so they sit below TWFE
+whenever universities were catching up before 2015. SEs: TWFE and SDID
+bootstrap over universities and firms (`r NB` draws); tjbal bootstrap in notebook 03.
+The cuts run in parallel on `r NC` workers.
+
+```{r estimators}
+sdid_fits <- list()
+sdid_one <- function(s, y = "filings") {
+  if (!has_sdid) return(list(att = NA_real_, se = NA_real_, est = NULL))
+  W <- dcast(s, inst_id + treat ~ year, value.var = y); setorder(W, treat, inst_id)
+  Y <- as.matrix(W[, -(1:2)]); N0 <- sum(W$treat == 0)
+  est <- tryCatch(synthdid::synthdid_estimate(Y, N0, sum(as.integer(colnames(Y)) < T0)), error = function(e) NULL)
+  if (is.null(est)) return(list(att = NA_real_, se = NA_real_, est = NULL))
+  se <- tryCatch(as.numeric(synthdid::synthdid_se(est, method = "bootstrap", replications = NB)), error = function(e) NA_real_)
+  list(att = as.numeric(est), se = as.numeric(se), est = est)
+}
+grant_safe <- as.integer(str_extract(readLines(here("data", "README_panel.txt"))[6], "[0-9]{4}$"))
+jobs <- c(lapply(cuts, function(cc) list(cc = cc, y = "filings")), lapply(pick(MAIN), function(cc) list(cc = cc, y = "granted")))
+runs <- parallel::mclapply(jobs, function(j) {
+  s <- sub_cut(d, j$cc); if (j$y == "granted") s <- s[year <= grant_safe]
+  if (!enough(s, 10)) return(NULL)
+  m <- s[, .(mean = mean(get(j$y))), by = .(treat, post)]
+  list(label = j$cc$label, y = j$y, sd = sdid_one(s, j$y), n_universities = s[treat == 1, uniqueN(inst_id)], n_firms = s[treat == 0, uniqueN(inst_id)],
+       univ_pre_mean = m[treat == 1 & post == 0, mean], firm_pre_mean = m[treat == 0 & post == 0, mean])
+}, mc.cores = min(NC, length(jobs)))
+for (r in runs) if (!is.null(r) && !inherits(r, "try-error") && !is.null(r$sd$est)) sdid_fits[[paste(r$label, r$y)]] <- r$sd$est
+
+# TWFE on the granted outcome, same cuts (the filings TWFE comes from Table 1)
+tw_g <- rbindlist(lapply(pick(MAIN), function(cc) {
+  s <- sub_cut(d, cc)[year <= grant_safe]; if (!enough(s, 2)) return(NULL)
+  f <- feols(granted ~ treat_post | inst_id + year, data = s, cluster = ~inst_id)
+  sb <- { W0 <- copy(s)[, filings := granted]; boot_twfe(W0) }
+  data.table(group = cc$label, outcome = "granted", estimator = "TWFE", att = coef(f)[["treat_post"]], se = sb, se_cluster = se(f)[["treat_post"]])
+}))
+est3 <- rbindlist(lapply(runs, function(r) {
+  if (is.null(r) || inherits(r, "try-error")) return(NULL)
+  tw <- if (r$y == "filings") t1[sample == "full" & group == r$label, .(att, se = se_boot, se_cluster = se)] else tw_g[group == r$label, .(att, se, se_cluster)]
+  rbind(data.table(group = r$label, outcome = r$y, estimator = "TWFE", att = tw$att, se = tw$se, se_cluster = tw$se_cluster),
+        data.table(group = r$label, outcome = r$y, estimator = "Synthetic DiD", att = r$sd$att, se = r$sd$se, se_cluster = NA_real_))[
+    , `:=`(n_universities = r$n_universities, n_firms = r$n_firms, univ_pre_mean = r$univ_pre_mean, firm_pre_mean = r$firm_pre_mean)]
+}))
+# trajectory balancing results from 03_tjbal.Rmd, if that notebook has been run
+tj_path <- here("output", "tables", "t8b_tjbal.csv")
+if (file.exists(tj_path)) {
+  tj <- fread(tj_path)[, .(group, outcome, estimator = "Trajectory balancing", att, se, se_cluster = NA_real_)]
+  tj <- merge(tj, unique(est3[, .(group, outcome, n_universities, n_firms, univ_pre_mean, firm_pre_mean)]), by = c("group", "outcome"), all.x = TRUE)
+  est3 <- rbind(est3, tj, fill = TRUE)
+} else cat("03_tjbal.Rmd has not been run; trajectory balancing rows are missing\n")
+est3[, stars := stars(2 * pnorm(-abs(att / se)))]
+est3[, estimator := factor(estimator, levels = c("TWFE", "Synthetic DiD", "Trajectory balancing"))]
+setorder(est3, outcome, group, estimator)
+kable(est3[outcome == "filings", .(group, estimator, n_universities, n_firms, univ_pre_mean, firm_pre_mean, att, se, stars)][order(match(group, cut_labels))], digits = 3, caption = "Filings")
+kable(est3[outcome == "granted", .(group, estimator, n_universities, n_firms, univ_pre_mean, firm_pre_mean, att, se, stars)][order(match(group, cut_labels))], digits = 3, caption = paste("Filings later granted, cohorts to", grant_safe))
+fwrite(est3, here("output", "tables", "t8_three_estimators.csv"))
+
+est3[, grp := factor(group, levels = rev(cut_labels))]
+coefplot <- function(dd, ttl) ggplot(dd[!is.na(att)], aes(x = att, y = grp, colour = estimator)) +
+  geom_vline(xintercept = 0, colour = "grey50") +
+  geom_pointrange(aes(xmin = att - 1.96 * se, xmax = att + 1.96 * se), position = position_dodge(width = 0.6), size = 0.3) +
+  facet_wrap(~ fifelse(group %chin% c("Central", "Elite (SIR 2010)", "Elite public", "Elite private"), "High-filing groups", "Other groups"), scales = "free") +
+  scale_colour_manual(values = c(TWFE = "#1f3b73", `Synthetic DiD` = "#c0504d", `Trajectory balancing` = "#2e7d32"), drop = FALSE) +
+  labs(x = "ATT per university-year, 2015-2020 (95% CI, bootstrap over universities and firms)", y = NULL, colour = NULL, title = ttl) + theme(legend.position = "bottom")
+g3 <- coefplot(est3[outcome == "filings"], "ATT by estimator: filings")
+print(g3); ggsave(here("output", "figures", "fig_coefplot_estimators.png"), g3, width = 10, height = 6, dpi = 200, bg = "white")
+g3g <- coefplot(est3[outcome == "granted"], "ATT by estimator: filings later granted")
+print(g3g); ggsave(here("output", "figures", "fig_coefplot_estimators_granted.png"), g3g, width = 10, height = 5, dpi = 200, bg = "white")
+```
+
+## 5b. Assumption checks for synthetic DiD: unit and time weights
+
+The time-weight plot shows which pre-years the SDID counterfactual leans on;
+the unit-weight plot shows that the weighted comparison is not one firm.
+Supplementary figures, one per main cut.
+
+```{r sdid_weights, fig.height = 4}
+if (has_sdid && length(sdid_fits)) {
+  for (k in names(sdid_fits)[str_ends(names(sdid_fits), " filings")]) {
+    est <- sdid_fits[[k]]; gname <- str_remove(k, " filings$")
+    tw <- attr(est, "weights")$lambda; yrs <- head(YEARS, length(tw))
+    om <- attr(est, "weights")$omega
+    wdat <- data.table(year = yrs, weight = tw)
+    pw <- ggplot(wdat, aes(year, weight)) + geom_col(fill = "#c0504d") + labs(title = paste("SDID time weights:", gname), x = NULL, y = "weight on pre-year")
+    udat <- data.table(w = sort(om, decreasing = TRUE))[, rank := .I]
+    pu <- ggplot(udat[w > 0], aes(rank, w)) + geom_point(size = 0.6, colour = "#1f3b73") + scale_x_log10() +
+      labs(title = paste0("SDID unit weights: ", gname, " (", sum(om > 1e-6), " firms with positive weight; max ", round(max(om), 3), ")"), x = "firm rank (log)", y = "weight")
+    print(pw); print(pu)
+    ggsave(here("output", "figures", paste0("fig_sdid_weights_", str_replace_all(tolower(gname), "[^a-z0-9]+", "_"), ".png")), gridExtra_safe(pw, pu), width = 10, height = 4, dpi = 200, bg = "white")
+    fwrite(data.table(group = gname, year = yrs, time_weight = tw), here("output", "tables", paste0("t8c_sdid_timeweights_", str_replace_all(tolower(gname), "[^a-z0-9]+", "_"), ".csv")))
+  }
+}
+```
+
+# 6. Honest DiD (Rambachan and Roth 2023)
+
+For every cut whose TWFE effect is significant at 5% (clustered), the
+average post-period effect is re-estimated allowing the post-period
+violation of parallel trends to be up to $\bar M$ times the largest
+pre-period violation (relative magnitudes). $\bar M = 1$ means "as bad as
+the worst pre-year". The breakdown value is the smallest $\bar M$ at which
+the robust confidence set includes zero.
+
+```{r honest, fig.height = 4}
+sig_groups <- t1[sample == "full" & !is.na(p) & p < 0.05, group]
+sig_granted <- if (nrow(tw_g)) tw_g[2 * pnorm(-abs(att / se_cluster)) < 0.05, group] else character()
+hd_jobs <- rbind(data.table(group = sig_groups, outcome = "filings"), data.table(group = sig_granted, outcome = "granted"))
+hd_all <- NULL
+if (has_hdid && nrow(hd_jobs)) {
+  Mbar <- c(0, 0.5, 1, 1.5, 2)
+  for (jj in seq_len(nrow(hd_jobs))) {
+    gname <- hd_jobs$group[jj]; yname <- hd_jobs$outcome[jj]
+    cc <- pick(gname)[[1]]; s <- sub_cut(d, cc); if (yname == "granted") s <- s[year <= grant_safe]
+    n_post_y <- s[, uniqueN(year[year >= T0])]
+    f <- feols(as.formula(paste(yname, "~ i(rel_year, treat, ref = 0) | inst_id + year")), data = s, cluster = ~inst_id)
+    nm <- names(coef(f)); ry <- as.integer(str_match(nm, "rel_year::(-?[0-9]+)")[, 2]); o <- order(ry)
+    b <- coef(f)[o]; V <- vcov(f)[o, o]
+    hd <- tryCatch(HonestDiD::createSensitivityResults_relativeMagnitudes(betahat = b, sigma = V, numPrePeriods = n_pre - 1L, numPostPeriods = n_post_y,
+                                                                          Mbarvec = Mbar, l_vec = rep(1 / n_post_y, n_post_y)), error = function(e) NULL)
+    oc <- tryCatch(HonestDiD::constructOriginalCS(betahat = b, sigma = V, numPrePeriods = n_pre - 1L, numPostPeriods = n_post_y, l_vec = rep(1 / n_post_y, n_post_y)), error = function(e) NULL)
+    if (is.null(hd) || is.null(oc)) next
+    hd <- as.data.table(hd); hd[, `:=`(group = gname, outcome = yname)]
+    hd_all <- rbind(hd_all, rbind(data.table(lb = oc$lb, ub = oc$ub, method = "Original", Delta = NA_character_, Mbar = NA_real_, group = gname, outcome = yname), hd, fill = TRUE))
+    p_hd <- HonestDiD::createSensitivityPlot_relativeMagnitudes(hd[, .(lb, ub, method, Delta, Mbar)], as.data.table(oc)) + labs(title = paste0(gname, ": ", yname))
+    print(p_hd); ggsave(here("output", "figures", paste0("fig_honestdid_", yname, "_", str_replace_all(tolower(gname), "[^a-z0-9]+", "_"), ".png")), p_hd, width = 7, height = 4, dpi = 200, bg = "white")
+  }
+  if (!is.null(hd_all)) {
+    hd_all[, includes_zero := lb <= 0 & ub >= 0]
+    bd <- hd_all[!is.na(Mbar), .(breakdown_Mbar = if (any(includes_zero)) min(Mbar[includes_zero]) else paste0("> ", max(Mbar))), by = .(group, outcome)]
+    kable(hd_all[, .(group, outcome, method, Mbar, lb, ub, includes_zero)], digits = 3, caption = "Robust confidence sets for the average post-period effect")
+    kable(bd, caption = "Breakdown value of Mbar")
+    fwrite(hd_all, here("output", "tables", "t9_honestdid.csv")); fwrite(bd, here("output", "tables", "t9b_honestdid_breakdown.csv"))
+  }
+} else cat("HonestDiD not installed or no significant TWFE effects; skipped\n")
+```
+
+# 7. Counterfactual plots
+
+One panel per cut with a significant TWFE effect (5%) that passes the
+pre-slope test. Lines: university mean; firm mean; the DiD counterfactual
+(firm mean plus the average pre-period gap); and, when trajectory balancing
+ran, its reweighted-firm counterfactual.
+
+```{r counterfactual, fig.width = 11, fig.height = 7}
+ok_groups <- intersect(sig_groups, pre[sample == "full" & pretrend == "pass", group])
+if (length(ok_groups)) {
+  cf <- rbindlist(lapply(ok_groups, function(gname) {
+    s <- sub_cut(d, pick(gname)[[1]])
+    m <- s[, .(mean = mean(filings)), by = .(year, treat)]
+    tr <- m[treat == 1][order(year)]; co <- m[treat == 0][order(year)]
+    gap <- mean(tr[year < T0, mean] - co[year < T0, mean])
+    out <- rbind(data.table(year = tr$year, series = "Universities", value = tr$mean),
+                 data.table(year = co$year, series = "Domestic firms", value = co$mean),
+                 data.table(year = co$year, series = "DiD counterfactual (firms + pre-gap)", value = co$mean + gap))
+    tjs <- here("output", "tables", "t8d_tjbal_series.csv")
+    if (file.exists(tjs)) { tj <- fread(tjs)[group == gname & outcome == "filings"]
+      if (nrow(tj)) out <- rbind(out, data.table(year = tj$year, series = "Trajectory-balanced counterfactual", value = tj$y_ct)) }
+    out[, group := gname]; out
+  }))
+  cf[, grp := factor(group, levels = cut_labels)]
+  att_lab <- t1[sample == "full" & group %chin% ok_groups, .(group, lab = sprintf("ATT %.2f (%.2f)", att, se))]
+  g4 <- ggplot(cf, aes(year, value, colour = series, linetype = series)) +
+    geom_vline(xintercept = T0 - 0.5, linetype = 2, colour = "grey50") + geom_line() + geom_point(size = 0.9) +
+    geom_text(data = merge(att_lab, unique(cf[, .(group, grp)]), by = "group"), aes(x = Y0 + 0.5, y = Inf, label = lab), inherit.aes = FALSE, vjust = 1.5, hjust = 0, size = 3) +
+    facet_wrap(~ grp, scales = "free_y", ncol = 3) +
+    scale_colour_manual(values = c(Universities = "#1f3b73", `Domestic firms` = "#2e7d32", `DiD counterfactual (firms + pre-gap)` = "#c0504d", `Trajectory-balanced counterfactual` = "#e69f00")) +
+    scale_linetype_manual(values = c(Universities = 1, `Domestic firms` = 1, `DiD counterfactual (firms + pre-gap)` = 2, `Trajectory-balanced counterfactual` = 3)) +
+    labs(x = NULL, y = "Mean filings per university-year", colour = NULL, linetype = NULL, title = "Universities vs counterfactual",
+         subtitle = "Groups with a significant TWFE effect and leads that pass the pre-trend test") + theme(legend.position = "bottom")
+  print(g4); ggsave(here("output", "figures", "fig_counterfactual.png"), g4, width = 11, height = 7, dpi = 200, bg = "white")
+  for (gname in ok_groups) {
+    gi <- g4 %+% cf[group == gname] + labs(title = gname, subtitle = NULL)
+    ggsave(here("output", "figures", paste0("fig_counterfactual_", str_replace_all(tolower(gname), "[^a-z0-9]+", "_"), ".png")), gi, width = 7, height = 4.5, dpi = 200, bg = "white")
+  }
+  fwrite(cf, here("output", "tables", "t10_counterfactual_series.csv"))
+} else cat("no group is both significant and passes the pre-trend test\n")
+```
+
+# 8. Robustness of the TWFE ATT
+
+```{r robust}
+rob_one <- function(s, label, spec) {
+  f <- feols(filings ~ treat_post | inst_id + year, data = s, cluster = ~inst_id)
+  data.table(group = label, spec = spec, n_universities = s[treat == 1, uniqueN(inst_id)], att = coef(f)[["treat_post"]], se = se(f)[["treat_post"]], p = pvalue(f)[["treat_post"]])
+}
+top10 <- d[treat == 1, .(n = sum(filings)), by = inst_id][order(-n)][1:10, inst_id]
+p99 <- quantile(d$filings[d$filings > 0], 0.99)
+full_ctrl <- panel[year %between% c(Y0, Y1) & class %chin% c("edu_elite", "edu_central", "edu_state", "edu_private", "firm")][, `:=`(post = as.integer(year >= T0))][, treat_post := treat * post]
+rob <- rbindlist(lapply(pick(MAIN), function(cc) rbind(
+  rob_one(sub_cut(d, cc), cc$label, "baseline"),
+  rob_one(sub_cut(d, cc)[!inst_id %chin% top10], cc$label, "drop 10 largest university filers"),
+  rob_one(copy(sub_cut(d, cc))[, filings := pmin(filings, p99)], cc$label, "winsorised at p99"),
+  rob_one(copy(sub_cut(d, cc))[, treat_post := treat * as.integer(year >= T0 - 1L)], cc$label, paste("post from", T0 - 1)),
+  rob_one(copy(sub_cut(d, cc))[, treat_post := treat * as.integer(year >= T0 + 1L)], cc$label, paste("post from", T0 + 1)),
+  rob_one(sub_cut(d, cc)[year <= 2018], cc$label, "window to 2018"),
+  rob_one(sub_cut(full_ctrl, cc), cc$label, "controls include startups"))))
+rob[, stars := stars(p)]
+kable(rob, digits = 3)
+fwrite(rob, here("output", "tables", "t4_robustness.csv"))
+```
+
+# 9. Placebo tests
+
+**In time.** Fake launch years on the pre-period only. **In space.** The 2015
+launch applied to never-ranked domestic groups vs the other firms:
+government labs and PSUs, individuals, firms by modal IPC section. The
+permutation p-value is the rank of universities among all groups.
+
+```{r placebo}
+plt <- rbindlist(lapply(pick(c("All universities", "Elite (SIR 2010)", "Non-elite", "Central", "Private")), function(cc) {
+  s0 <- sub_cut(d, cc)[year <= BASE]
+  rbindlist(lapply(seq(Y0 + 3, BASE - 3), function(fy) {
+    s <- copy(s0)[, treat_post := treat * as.integer(year >= fy)]
+    f <- feols(filings ~ treat_post | inst_id + year, data = s, cluster = ~inst_id)
+    data.table(group = cc$label, fake_launch = fy, att = coef(f)[["treat_post"]], se = se(f)[["treat_post"]])
+  }))
+}))
+plt <- rbind(plt, t1[sample == "full" & group %chin% unique(plt$group), .(group, fake_launch = T0, att, se)])
+kable(dcast(plt, fake_launch ~ group, value.var = "att"), digits = 3, caption = "Placebo launch years (pre-period only); last row = actual")
+fwrite(plt, here("output", "tables", "t5_placebo_time.csv"))
+
+dom <- apps[domestic == TRUE & !is.na(inst_id) & filing_year %between% c(Y0, Y1)]
+firm_ids <- d[treat == 0, unique(inst_id)]
+make_panel <- function(ids_tr, ids_ct) {
+  a <- dom[inst_id %chin% c(ids_tr, ids_ct), .(filings = .N), by = .(inst_id, year = filing_year)]
+  pp <- CJ(inst_id = unique(c(ids_tr, ids_ct)), year = Y0:Y1); pp <- merge(pp, a, by = c("inst_id", "year"), all.x = TRUE)
+  pp[is.na(filings), filings := 0L]; pp[, treat := as.integer(inst_id %chin% ids_tr)]; pp[, treat_post := treat * as.integer(year >= T0)]; pp
+}
+lrr <- function(pp) {
+  m <- pp[, .(mean = mean(filings)), by = .(treat, year >= T0)]
+  log(m[treat == 1 & year == TRUE, mean] / m[treat == 1 & year == FALSE, mean]) - log(m[treat == 0 & year == TRUE, mean] / m[treat == 0 & year == FALSE, mean])
+}
+placebo_groups <- list(list(lab = "Government labs / PSUs", ids = dom[sector == "govt_lab_psu", unique(inst_id)]),
+                       list(lab = "Individuals", ids = dom[sector == "individual_other", unique(inst_id)]))
+firm_sec <- dom[inst_id %chin% firm_ids & !is.na(ipc_section), .N, by = .(inst_id, ipc_section)][order(-N)][, .SD[1], by = inst_id]
+for (sct in sort(unique(firm_sec$ipc_section))) placebo_groups[[length(placebo_groups) + 1]] <- list(lab = paste("Firms, IPC section", sct), ids = firm_sec[ipc_section == sct, inst_id])
+pls <- rbindlist(lapply(placebo_groups, function(pg) {
+  ids_tr <- setdiff(pg$ids, firm_ids); ids_ct <- firm_ids
+  if (str_starts(pg$lab, "Firms")) { ids_tr <- pg$ids; ids_ct <- setdiff(firm_ids, pg$ids) }
+  if (length(ids_tr) < 20) return(NULL)
+  pp <- make_panel(ids_tr, ids_ct)
+  f <- feols(filings ~ treat_post | inst_id + year, data = pp, cluster = ~inst_id)
+  data.table(group = pg$lab, n_universities = length(ids_tr), att = coef(f)[["treat_post"]], se = se(f)[["treat_post"]], log_rr = lrr(pp))
+}))
+univ_pp <- d[, .(inst_id, year, filings, treat, treat_post)]
+pls <- rbind(data.table(group = "Universities (actual)", n_universities = d[treat == 1, uniqueN(inst_id)],
+                        att = t1[sample == "full" & group == "All universities", att], se = t1[sample == "full" & group == "All universities", se], log_rr = lrr(univ_pp)), pls)
+pls[, rank_att := frank(-att)]; pls[, rank_log_rr := frank(-log_rr)]
+pls[, p_perm_att := rank_att[group == "Universities (actual)"] / .N]; pls[, p_perm_log_rr := rank_log_rr[group == "Universities (actual)"] / .N]
+kable(pls[order(-log_rr)], digits = 3, caption = "Placebo groups at the 2015 launch; p_perm = rank of universities among all groups")
+fwrite(pls, here("output", "tables", "t6_placebo_space.csv"))
+```
+
+# 10. Quality-adjusted counts
+
+Same TWFE on four outcomes: filings; filings later granted (cohorts to the
+grant-safe year); granted within four years; patents granted in the year (by
+grant date). The ratio of the granted ATT to the filings ATT is the share of
+the extra filings that became patents.
+
+```{r quality}
+qa <- rbindlist(lapply(pick(c(MAIN, "Elite public", "Elite private", "Non-elite private")), function(cc) {
+  s <- sub_cut(d, cc)[year <= grant_safe]; if (!enough(s, 2)) return(NULL)
+  rbindlist(lapply(c("filings", "granted", "granted_within_4y", "grants_in_year"), function(y) {
+    f <- tryCatch(feols(as.formula(paste(y, "~ treat_post | inst_id + year")), data = s, cluster = ~inst_id), error = function(e) NULL)
+    if (is.null(f)) return(NULL)
+    data.table(group = cc$label, outcome = y, window = paste(Y0, grant_safe, sep = "-"), att = coef(f)[["treat_post"]], se = se(f)[["treat_post"]], p = pvalue(f)[["treat_post"]],
+               univ_pre_mean = s[treat == 1 & post == 0, mean(get(y))], firm_pre = s[treat == 0 & post == 0, mean(get(y))], firm_post = s[treat == 0 & post == 1, mean(get(y))])
+  }))
+}))
+qa[, stars := stars(p)]
+qa[, share_of_filings_att := att / att[outcome == "filings"], by = group]
+kable(qa, digits = 3)
+fwrite(qa, here("output", "tables", "t7_quality_adjusted.csv"))
+
+es_g <- rbindlist(lapply(pick(MAIN), function(cc) {
+  s <- sub_cut(d, cc)[year <= grant_safe]; if (!enough(s)) return(NULL)
+  f <- tryCatch(feols(granted ~ i(rel_year, treat, ref = 0) | inst_id + year, data = s, cluster = ~inst_id), error = function(e) NULL)
+  if (is.null(f)) return(NULL)
+  ct <- as.data.table(coeftable(f), keep.rownames = "term"); setnames(ct, c("term", "coef", "se", "t", "p"))
+  ct[, rel_year := as.integer(str_match(term, "rel_year::(-?[0-9]+)")[, 2])]
+  w <- wald(f, keep = "rel_year::-", print = FALSE)
+  ct[, .(group = cc$label, rel_year, year = rel_year + BASE, coef, se, p, wald_leads_p = w$p)]
+}))
+es_g[, pretrend := fifelse(wald_leads_p >= params$alpha_pre, "pass", "fail")]
+fwrite(es_g, here("output", "tables", "t7b_event_study_granted.csv"))
+kable(unique(es_g[, .(group, wald_leads_p, pretrend)]), digits = 3, caption = "Pre-trend test, filings later granted")
+```
+
+# 10b. Extensive margin (exploratory; future work)
+
+Among institutions that had not filed before `r T0`, did the ranking make
+them start? Linear-probability DiD on "any filing this year", universities vs
+firms, both groups restricted to units with no filing before `r T0`. This
+conditions on a pre-period outcome, which is allowed; it is reported as
+exploratory because the never-filers before 2015 include institutions that
+did not exist yet.
+
+```{r extensive}
+d_new <- d[first_filing_year >= T0]
+d_new[, any_filing := as.integer(filings > 0)]
+ext <- rbindlist(lapply(pick(MAIN), function(cc) {
+  s <- sub_cut(d_new, cc); if (!enough(s, 5)) return(NULL)
+  f <- feols(any_filing ~ treat_post | inst_id + year, data = s, cluster = ~inst_id)
+  data.table(group = cc$label, n_universities = s[treat == 1, uniqueN(inst_id)], n_firms = s[treat == 0, uniqueN(inst_id)],
+             share_univ_filing_post = s[treat == 1 & post == 1, mean(any_filing)], share_firm_filing_post = s[treat == 0 & post == 1, mean(any_filing)],
+             att_pp = 100 * coef(f)[["treat_post"]], se_pp = 100 * se(f)[["treat_post"]], p = pvalue(f)[["treat_post"]])
+}))
+ext[, stars := stars(p)]
+kable(ext, digits = 3, caption = "Probability of filing in a year, percentage points, units with no filing before 2015")
+fwrite(ext, here("output", "tables", "t11_extensive_margin.csv"))
+```
+
+# 11. Summary table for the paper
+
+```{r summary}
+sumtab <- merge(t1[sample == "full", .(group, level, n_universities, univ_pre_mean, att, se, se_boot, stars)],
+                pre[sample == "full", .(group, pretrend_slope, pretrend_slope_se, pretrend, wald_leads_p, pretrend_wald)], by = "group", all.x = TRUE)
+sumtab <- merge(sumtab, t1[sample == "pre-2015 filers", .(group, att_pre2015_filers = att, se_pre2015_filers = se)], by = "group", all.x = TRUE)
+if (exists("est3") && nrow(est3)) {
+  sumtab <- merge(sumtab, dcast(est3[estimator != "TWFE" & outcome == "filings"], group ~ estimator, value.var = c("att", "se")), by = "group", all.x = TRUE)
+}
+if (!is.null(hd_all)) sumtab <- merge(sumtab, hd_all[Mbar == 1 & outcome == "filings", .(group, honest_lb_Mbar1 = lb, honest_ub_Mbar1 = ub)], by = "group", all.x = TRUE)
+sumtab <- merge(sumtab, qa[outcome == "granted", .(group, share_granted = share_of_filings_att)], by = "group", all.x = TRUE)
+sumtab <- sumtab[match(cut_labels, group)][!is.na(group)]
+kable(sumtab, digits = 3)
+fwrite(sumtab, here("output", "tables", "summary_nirf2015.csv"))
+```

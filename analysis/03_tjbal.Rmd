@@ -1,0 +1,150 @@
+---
+title: "03. Trajectory balancing (Hazlett and Xu 2018)"
+author: "Sonali Singh"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    code_folding: show
+params:
+  year_min: 2005
+  year_max: 2020
+  nirf_year: 2015
+  n_boot: 200            # bootstrap draws; 20 for a quick run
+  n_cores: 0             # 0 = all cores but one
+  outcomes: ["filings", "granted"]
+---
+
+Trajectory balancing for the same cuts as notebook 02, kept separate because
+it is the slow estimator. It writes three files that 02 picks up when it
+knits: `output/tables/t8b_tjbal.csv` (ATT and bootstrap SE per cut and
+outcome), `t8d_tjbal_series.csv` (treated mean, weighted counterfactual,
+unweighted firm mean by year, for the counterfactual plots) and the balance
+tables and weight loadings in `output/tables/tjbal_balance_*.csv` and
+`output/figures/fig_tjbal_weights_*.png`.
+
+Specification: mean balancing (`estimator = "mean"`) on the demeaned
+pre-period outcomes (`demean = TRUE`), no covariates, bootstrap SE
+(`vce = "boot"`, `r params$n_boot` draws). Kernel balancing is not run; it is
+computationally expensive with 11,000 control firms and the mean-balancing
+moment condition is the one shared with synthetic DiD.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 9, fig.height = 5)
+suppressPackageStartupMessages({ library(here); library(data.table); library(stringr); library(ggplot2); library(knitr) })
+stopifnot(requireNamespace("tjbal", quietly = TRUE))   # remotes::install_github("xuyiqing/tjbal")
+setDTthreads(0)
+dir.create(here("output", "tables"), showWarnings = FALSE, recursive = TRUE); dir.create(here("output", "figures"), showWarnings = FALSE, recursive = TRUE)
+theme_set(theme_minimal(base_size = 11))
+Y0 <- params$year_min; Y1 <- params$year_max; T0 <- params$nirf_year; NB <- params$n_boot
+NC <- if (params$n_cores > 0) params$n_cores else max(1L, parallel::detectCores() - 1L)
+if (.Platform$OS.type == "windows") NC <- 1L
+panel <- readRDS(here("data", "panel_inst_year.rds"))
+grant_safe <- as.integer(str_extract(readLines(here("data", "README_panel.txt"))[6], "[0-9]{4}$"))
+d <- panel[year %between% c(Y0, Y1) & class %chin% c("edu_elite", "edu_central", "edu_state", "edu_private", "firm") & group != "Startup firm (excluded)"]
+d[, post := as.integer(year >= T0)][, treat_post := treat * post]
+cuts <- list(
+  list(label = "All universities",   sel = quote(treat == 1)),
+  list(label = "Central",            sel = quote(treat == 1 & ownership == "central")),
+  list(label = "State",              sel = quote(treat == 1 & ownership == "state")),
+  list(label = "Private",            sel = quote(treat == 1 & ownership == "private")),
+  list(label = "Elite (SIR 2010)",   sel = quote(elite == 1)),
+  list(label = "Non-elite",          sel = quote(treat == 1 & elite == 0)),
+  list(label = "Elite public",       sel = quote(elite == 1 & ownership %chin% c("central", "state"))),
+  list(label = "Elite private",      sel = quote(elite == 1 & ownership == "private")),
+  list(label = "Non-elite central",  sel = quote(treat == 1 & elite == 0 & ownership == "central")),
+  list(label = "Non-elite state",    sel = quote(treat == 1 & elite == 0 & ownership == "state")),
+  list(label = "Non-elite private",  sel = quote(treat == 1 & elite == 0 & ownership == "private")))
+MAIN <- c("All universities", "Central", "State", "Private", "Elite (SIR 2010)", "Non-elite")
+sub_cut <- function(dd, cc) dd[eval(cc$sel) | class == "firm"]
+slug <- function(x) str_replace_all(tolower(x), "[^a-z0-9]+", "_")
+```
+
+# Estimation
+
+```{r run}
+tjbal_one <- function(s, y, nsims = NB) {
+  dat <- as.data.frame(s[, .(inst_id = as.character(inst_id), year = as.integer(year), yv = as.numeric(get(y)), treat_post = as.integer(treat_post))])
+  out <- tryCatch(suppressMessages(tjbal::tjbal(data = dat, Y = "yv", D = "treat_post", index = c("inst_id", "year"), demean = TRUE,
+                                                estimator = "mean", vce = "boot", nsims = nsims, parallel = FALSE, print.baltable = FALSE, seed = 20261105)),
+                  error = function(e) structure(list(msg = conditionMessage(e)), class = "tjerr"))
+  if (inherits(out, "tjerr")) return(out)
+  w <- out$weights.co
+  list(att = out$est.att.avg[1, "ATT"], se = out$est.att.avg[1, "S.E."], ci_l = out$est.att.avg[1, "CI.lower"], ci_u = out$est.att.avg[1, "CI.upper"],
+       att_t = out$est.att, ybar = out$Y.bar, bal = out$bal.table, weights = w, n_universities = out$Ntr, n_firms = out$Nco)
+}
+jobs <- c(lapply(cuts, function(cc) list(cc = cc, y = "filings")), if ("granted" %chin% params$outcomes) lapply(cuts[sapply(cuts, `[[`, "label") %chin% MAIN], function(cc) list(cc = cc, y = "granted")))
+# smoke test: one cut, serially, few draws, so an error is visible rather than swallowed by the workers
+smoke <- tjbal_one(sub_cut(d, cuts[[2]]), "filings", nsims = 2)
+if (inherits(smoke, "tjerr")) stop("tjbal failed on the Central cut: ", smoke$msg)
+cat("smoke test ok: Central ATT", round(smoke$att, 3), "\n")
+
+t_start <- Sys.time()
+run_job <- function(j) {
+  s <- sub_cut(d, j$cc); if (j$y == "granted") s <- s[year <= grant_safe]
+  if (s[treat == 1, uniqueN(inst_id)] < 10) return(NULL)
+  r <- tjbal_one(s, j$y)
+  if (inherits(r, "tjerr")) return(list(group = j$cc$label, outcome = j$y, msg = r$msg))
+  c(list(group = j$cc$label, outcome = j$y), r)
+}
+# PSOCK workers, not fork: on macOS the Accelerate BLAS that tjbal's SVD uses segfaults inside forked (mclapply) children
+cl <- parallel::makeCluster(min(NC, length(jobs)))
+parallel::clusterEvalQ(cl, { suppressPackageStartupMessages({ library(data.table); library(tjbal) }); setDTthreads(1) })
+parallel::clusterExport(cl, c("d", "cuts", "sub_cut", "tjbal_one", "grant_safe", "NB"), envir = environment())
+runs <- parallel::parLapply(cl, jobs, run_job)
+parallel::stopCluster(cl)
+cat("elapsed:", format(round(Sys.time() - t_start, 1)), "\n")
+errs <- Filter(function(r) is.list(r) && !is.null(r$msg), runs)
+for (e in errs) cat("FAILED:", e$group, e$outcome, "->", e$msg, "\n")
+runs <- Filter(function(r) is.list(r) && is.null(r$msg) && !inherits(r, "try-error"), runs)
+if (!length(runs)) stop("every tjbal run failed; see the FAILED lines above")
+
+res <- rbindlist(lapply(runs, function(r) data.table(group = r$group, outcome = r$outcome, att = r$att, se = r$se, ci_lower = r$ci_l, ci_upper = r$ci_u,
+                                                      n_universities = r$n_universities, n_firms = r$n_firms)))
+res[, p := 2 * pnorm(-abs(att / se))]
+kable(res, digits = 3)
+fwrite(res, here("output", "tables", "t8b_tjbal.csv"))
+
+ser <- rbindlist(lapply(runs, function(r) data.table(group = r$group, outcome = r$outcome, year = as.integer(rownames(r$ybar)),
+                                                      y_treated = r$ybar[, "Y.tr.bar"], y_ct = r$ybar[, "Y.ct.bar"], y_control_raw = r$ybar[, "Y.co.bar"])))
+fwrite(ser, here("output", "tables", "t8d_tjbal_series.csv"))
+att_t <- rbindlist(lapply(runs, function(r) { a <- as.data.table(r$att_t, keep.rownames = "year"); a[, `:=`(group = r$group, outcome = r$outcome)]; a }))
+fwrite(att_t, here("output", "tables", "t8e_tjbal_att_by_year.csv"))
+```
+
+# Balance and weight loadings
+
+For each cut: the balance table (treated mean vs weighted-control mean of the
+demeaned pre-period outcome in every pre-year) and the distribution of the
+weights on firms. A well-behaved fit balances every pre-year and spreads the
+weight over many firms.
+
+```{r balance, fig.height = 4}
+for (r in runs) {
+  b <- r$bal; if (is.null(b)) next
+  bt <- as.data.table(b, keep.rownames = "moment")
+  fwrite(bt, here("output", "tables", paste0("tjbal_balance_", r$outcome, "_", slug(r$group), ".csv")))
+  w <- r$weights; w <- w[!is.na(w)]
+  wd <- data.table(w = sort(w, decreasing = TRUE))[, rank := .I]
+  eff_n <- sum(w)^2 / sum(w^2)
+  pw <- ggplot(wd[w > 0], aes(rank, w)) + geom_point(size = 0.5, colour = "#2e7d32") + scale_x_log10() +
+    labs(title = paste0("Weights on firms: ", r$group, " (", r$outcome, ")"),
+         subtitle = sprintf("%d firms; %d with positive weight; max %.3f; effective N %.0f", length(w), sum(w > 1e-8), max(w), eff_n), x = "firm rank (log)", y = "weight")
+  print(pw); ggsave(here("output", "figures", paste0("fig_tjbal_weights_", r$outcome, "_", slug(r$group), ".png")), pw, width = 8, height = 4, dpi = 200, bg = "white")
+  if (r$outcome == "filings" && r$group %chin% MAIN) kable(bt, digits = 3, caption = paste("Balance:", r$group))
+}
+```
+
+# Counterfactual paths
+
+```{r paths, fig.width = 11, fig.height = 7}
+sp <- melt(ser[outcome == "filings"], id.vars = c("group", "outcome", "year"), variable.name = "series", value.name = "value")
+sp[, series := factor(series, levels = c("y_treated", "y_ct", "y_control_raw"), labels = c("Universities", "Trajectory-balanced counterfactual", "Domestic firms (unweighted)"))]
+sp[, grp := factor(group, levels = sapply(cuts, `[[`, "label"))]
+g <- ggplot(sp, aes(year, value, colour = series, linetype = series)) + geom_vline(xintercept = T0 - 0.5, linetype = 2, colour = "grey50") +
+  geom_line() + geom_point(size = 0.8) + facet_wrap(~ grp, scales = "free_y", ncol = 4) +
+  scale_colour_manual(values = c(Universities = "#1f3b73", `Trajectory-balanced counterfactual` = "#e69f00", `Domestic firms (unweighted)` = "#2e7d32")) +
+  scale_linetype_manual(values = c(1, 3, 1)) +
+  labs(x = NULL, y = "Mean filings per university-year", colour = NULL, linetype = NULL, title = "Trajectory balancing: treated mean vs weighted counterfactual") + theme(legend.position = "bottom")
+print(g); ggsave(here("output", "figures", "fig_tjbal_paths.png"), g, width = 11, height = 7, dpi = 200, bg = "white")
+```

@@ -1,0 +1,449 @@
+year,series,value,group,grp
+2005,Universities,0.0563380281690141,All universities,All universities
+2006,Universities,0.0633802816901408,All universities,All universities
+2007,Universities,0.0633802816901408,All universities,All universities
+2008,Universities,0.0731052984574111,All universities,All universities
+2009,Universities,0.105298457411133,All universities,All universities
+2010,Universities,0.134473507712944,All universities,All universities
+2011,Universities,0.165660630449363,All universities,All universities
+2012,Universities,0.234406438631791,All universities,All universities
+2013,Universities,0.283031522468142,All universities,All universities
+2014,Universities,0.298792756539235,All universities,All universities
+2015,Universities,0.384641180415828,All universities,All universities
+2016,Universities,0.465459423205902,All universities,All universities
+2017,Universities,0.667672702883971,All universities,All universities
+2018,Universities,0.813547954393025,All universities,All universities
+2019,Universities,1.27397719651241,All universities,All universities
+2020,Universities,1.57444668008048,All universities,All universities
+2005,Domestic firms,0.152580471138285,All universities,All universities
+2006,Domestic firms,0.182161481747887,All universities,All universities
+2007,Domestic firms,0.229095486423305,All universities,All universities
+2008,Domestic firms,0.233950728286279,All universities,All universities
+2009,Domestic firms,0.234220463945334,All universities,All universities
+2010,Domestic firms,0.257957201942097,All universities,All universities
+2011,Domestic firms,0.292932925732782,All universities,All universities
+2012,Domestic firms,0.287358388778997,All universities,All universities
+2013,Domestic firms,0.280794821075346,All universities,All universities
+2014,Domestic firms,0.276748786189534,All universities,All universities
+2015,Domestic firms,0.360726488041719,All universities,All universities
+2016,Domestic firms,0.341755080021579,All universities,All universities
+2017,Domestic firms,0.357669483905772,All universities,All universities
+2018,Domestic firms,0.378798777198346,All universities,All universities
+2019,Domestic firms,0.429958640532278,All universities,All universities
+2020,Domestic firms,0.419888509260924,All universities,All universities
+2005,DiD counterfactual (firms + pre-gap),0.0575871159342316,All universities,All universities
+2006,DiD counterfactual (firms + pre-gap),0.0871681265438341,All universities,All universities
+2007,DiD counterfactual (firms + pre-gap),0.134102131219252,All universities,All universities
+2008,DiD counterfactual (firms + pre-gap),0.138957373082226,All universities,All universities
+2009,DiD counterfactual (firms + pre-gap),0.139227108741281,All universities,All universities
+2010,DiD counterfactual (firms + pre-gap),0.162963846738044,All universities,All universities
+2011,DiD counterfactual (firms + pre-gap),0.197939570528729,All universities,All universities
+2012,DiD counterfactual (firms + pre-gap),0.192365033574944,All universities,All universities
+2013,DiD counterfactual (firms + pre-gap),0.185801465871293,All universities,All universities
+2014,DiD counterfactual (firms + pre-gap),0.181755430985481,All universities,All universities
+2015,DiD counterfactual (firms + pre-gap),0.265733132837666,All universities,All universities
+2016,DiD counterfactual (firms + pre-gap),0.246761724817526,All universities,All universities
+2017,DiD counterfactual (firms + pre-gap),0.262676128701719,All universities,All universities
+2018,DiD counterfactual (firms + pre-gap),0.283805421994293,All universities,All universities
+2019,DiD counterfactual (firms + pre-gap),0.334965285328225,All universities,All universities
+2020,DiD counterfactual (firms + pre-gap),0.324895154056871,All universities,All universities
+,Trajectory-balanced counterfactual,0.0563380222902673,All universities,All universities
+,Trajectory-balanced counterfactual,0.0633802781552542,All universities,All universities
+,Trajectory-balanced counterfactual,0.0633802825721545,All universities,All universities
+,Trajectory-balanced counterfactual,0.0731053010532886,All universities,All universities
+,Trajectory-balanced counterfactual,0.105298452365323,All universities,All universities
+,Trajectory-balanced counterfactual,0.134473505410767,All universities,All universities
+,Trajectory-balanced counterfactual,0.165660629068561,All universities,All universities
+,Trajectory-balanced counterfactual,0.234406439135319,All universities,All universities
+,Trajectory-balanced counterfactual,0.283031526742577,All universities,All universities
+,Trajectory-balanced counterfactual,0.298792766425796,All universities,All universities
+,Trajectory-balanced counterfactual,0.430215739675601,All universities,All universities
+,Trajectory-balanced counterfactual,0.444661908845175,All universities,All universities
+,Trajectory-balanced counterfactual,0.485060304957319,All universities,All universities
+,Trajectory-balanced counterfactual,0.472981177059195,All universities,All universities
+,Trajectory-balanced counterfactual,0.492269476311296,All universities,All universities
+,Trajectory-balanced counterfactual,0.46317091378094,All universities,All universities
+2005,Universities,0.36046511627907,Central,Central
+2006,Universities,0.482558139534884,Central,Central
+2007,Universities,0.406976744186047,Central,Central
+2008,Universities,0.546511627906977,Central,Central
+2009,Universities,0.604651162790698,Central,Central
+2010,Universities,1.01744186046512,Central,Central
+2011,Universities,1.1453488372093,Central,Central
+2012,Universities,1.44767441860465,Central,Central
+2013,Universities,2.16279069767442,Central,Central
+2014,Universities,2.12790697674419,Central,Central
+2015,Universities,2.56976744186047,Central,Central
+2016,Universities,3.0406976744186,Central,Central
+2017,Universities,3.59302325581395,Central,Central
+2018,Universities,4.26744186046512,Central,Central
+2019,Universities,4.81395348837209,Central,Central
+2020,Universities,5.25581395348837,Central,Central
+2005,Domestic firms,0.152580471138285,Central,Central
+2006,Domestic firms,0.182161481747887,Central,Central
+2007,Domestic firms,0.229095486423305,Central,Central
+2008,Domestic firms,0.233950728286279,Central,Central
+2009,Domestic firms,0.234220463945334,Central,Central
+2010,Domestic firms,0.257957201942097,Central,Central
+2011,Domestic firms,0.292932925732782,Central,Central
+2012,Domestic firms,0.287358388778997,Central,Central
+2013,Domestic firms,0.280794821075346,Central,Central
+2014,Domestic firms,0.276748786189534,Central,Central
+2015,Domestic firms,0.360726488041719,Central,Central
+2016,Domestic firms,0.341755080021579,Central,Central
+2017,Domestic firms,0.357669483905772,Central,Central
+2018,Domestic firms,0.378798777198346,Central,Central
+2019,Domestic firms,0.429958640532278,Central,Central
+2020,Domestic firms,0.419888509260924,Central,Central
+2005,DiD counterfactual (firms + pre-gap),0.940032953751835,Central,Central
+2006,DiD counterfactual (firms + pre-gap),0.969613964361437,Central,Central
+2007,DiD counterfactual (firms + pre-gap),1.01654796903686,Central,Central
+2008,DiD counterfactual (firms + pre-gap),1.02140321089983,Central,Central
+2009,DiD counterfactual (firms + pre-gap),1.02167294655888,Central,Central
+2010,DiD counterfactual (firms + pre-gap),1.04540968455565,Central,Central
+2011,DiD counterfactual (firms + pre-gap),1.08038540834633,Central,Central
+2012,DiD counterfactual (firms + pre-gap),1.07481087139255,Central,Central
+2013,DiD counterfactual (firms + pre-gap),1.0682473036889,Central,Central
+2014,DiD counterfactual (firms + pre-gap),1.06420126880308,Central,Central
+2015,DiD counterfactual (firms + pre-gap),1.14817897065527,Central,Central
+2016,DiD counterfactual (firms + pre-gap),1.12920756263513,Central,Central
+2017,DiD counterfactual (firms + pre-gap),1.14512196651932,Central,Central
+2018,DiD counterfactual (firms + pre-gap),1.1662512598119,Central,Central
+2019,DiD counterfactual (firms + pre-gap),1.21741112314583,Central,Central
+2020,DiD counterfactual (firms + pre-gap),1.20734099187447,Central,Central
+,Trajectory-balanced counterfactual,0.360465116857567,Central,Central
+,Trajectory-balanced counterfactual,0.482558140327886,Central,Central
+,Trajectory-balanced counterfactual,0.406976743702351,Central,Central
+,Trajectory-balanced counterfactual,0.54651162784033,Central,Central
+,Trajectory-balanced counterfactual,0.604651161652999,Central,Central
+,Trajectory-balanced counterfactual,1.01744185972513,Central,Central
+,Trajectory-balanced counterfactual,1.14534883660138,Central,Central
+,Trajectory-balanced counterfactual,1.44767441846743,Central,Central
+,Trajectory-balanced counterfactual,2.16279069833573,Central,Central
+,Trajectory-balanced counterfactual,2.12790697788453,Central,Central
+,Trajectory-balanced counterfactual,2.82506834655824,Central,Central
+,Trajectory-balanced counterfactual,2.88234720869308,Central,Central
+,Trajectory-balanced counterfactual,3.05581316539833,Central,Central
+,Trajectory-balanced counterfactual,2.68984724705348,Central,Central
+,Trajectory-balanced counterfactual,2.45649873460158,Central,Central
+,Trajectory-balanced counterfactual,2.18489106135647,Central,Central
+2005,Universities,0.0327318506084767,Private,Private
+2006,Universities,0.0323122114981116,Private,Private
+2007,Universities,0.0302140159462862,Private,Private
+2008,Universities,0.0386067981535879,Private,Private
+2009,Universities,0.0742761225346202,Private,Private
+2010,Universities,0.0709190096516995,Private,Private
+2011,Universities,0.103231221149811,Private,Private
+2012,Universities,0.151489718841796,Private,Private
+2013,Universities,0.154427192614352,Private,Private
+2014,Universities,0.195132186319765,Private,Private
+2015,Universities,0.263533361309274,Private,Private
+2016,Universities,0.318086445656735,Private,Private
+2017,Universities,0.529164918170373,Private,Private
+2018,Universities,0.646244229962233,Private,Private
+2019,Universities,1.16198069660092,Private,Private
+2020,Universities,1.50566512798993,Private,Private
+2005,Domestic firms,0.152580471138285,Private,Private
+2006,Domestic firms,0.182161481747887,Private,Private
+2007,Domestic firms,0.229095486423305,Private,Private
+2008,Domestic firms,0.233950728286279,Private,Private
+2009,Domestic firms,0.234220463945334,Private,Private
+2010,Domestic firms,0.257957201942097,Private,Private
+2011,Domestic firms,0.292932925732782,Private,Private
+2012,Domestic firms,0.287358388778997,Private,Private
+2013,Domestic firms,0.280794821075346,Private,Private
+2014,Domestic firms,0.276748786189534,Private,Private
+2015,Domestic firms,0.360726488041719,Private,Private
+2016,Domestic firms,0.341755080021579,Private,Private
+2017,Domestic firms,0.357669483905772,Private,Private
+2018,Domestic firms,0.378798777198346,Private,Private
+2019,Domestic firms,0.429958640532278,Private,Private
+2020,Domestic firms,0.419888509260924,Private,Private
+2005,DiD counterfactual (firms + pre-gap),-0.00186557165584944,Private,Private
+2006,DiD counterfactual (firms + pre-gap),0.0277154389537531,Private,Private
+2007,DiD counterfactual (firms + pre-gap),0.0746494436291712,Private,Private
+2008,DiD counterfactual (firms + pre-gap),0.0795046854921455,Private,Private
+2009,DiD counterfactual (firms + pre-gap),0.0797744211511997,Private,Private
+2010,DiD counterfactual (firms + pre-gap),0.103511159147963,Private,Private
+2011,DiD counterfactual (firms + pre-gap),0.138486882938648,Private,Private
+2012,DiD counterfactual (firms + pre-gap),0.132912345984863,Private,Private
+2013,DiD counterfactual (firms + pre-gap),0.126348778281212,Private,Private
+2014,DiD counterfactual (firms + pre-gap),0.1223027433954,Private,Private
+2015,DiD counterfactual (firms + pre-gap),0.206280445247585,Private,Private
+2016,DiD counterfactual (firms + pre-gap),0.187309037227445,Private,Private
+2017,DiD counterfactual (firms + pre-gap),0.203223441111638,Private,Private
+2018,DiD counterfactual (firms + pre-gap),0.224352734404212,Private,Private
+2019,DiD counterfactual (firms + pre-gap),0.275512597738144,Private,Private
+2020,DiD counterfactual (firms + pre-gap),0.26544246646679,Private,Private
+,Trajectory-balanced counterfactual,0.0327318506081209,Private,Private
+,Trajectory-balanced counterfactual,0.0323122114977887,Private,Private
+,Trajectory-balanced counterfactual,0.030214015946127,Private,Private
+,Trajectory-balanced counterfactual,0.0386067981535518,Private,Private
+,Trajectory-balanced counterfactual,0.0742761225342604,Private,Private
+,Trajectory-balanced counterfactual,0.0709190096514508,Private,Private
+,Trajectory-balanced counterfactual,0.103231221149596,Private,Private
+,Trajectory-balanced counterfactual,0.151489718841898,Private,Private
+,Trajectory-balanced counterfactual,0.154427192614761,Private,Private
+,Trajectory-balanced counterfactual,0.195132186320951,Private,Private
+,Trajectory-balanced counterfactual,0.29260645433537,Private,Private
+,Trajectory-balanced counterfactual,0.317784753792606,Private,Private
+,Trajectory-balanced counterfactual,0.34546006526647,Private,Private
+,Trajectory-balanced counterfactual,0.338550445349918,Private,Private
+,Trajectory-balanced counterfactual,0.371612893549236,Private,Private
+,Trajectory-balanced counterfactual,0.356547369804297,Private,Private
+2005,Universities,0.592592592592593,Elite (SIR 2010),Elite (SIR 2010)
+2006,Universities,0.615740740740741,Elite (SIR 2010),Elite (SIR 2010)
+2007,Universities,0.671296296296296,Elite (SIR 2010),Elite (SIR 2010)
+2008,Universities,0.777777777777778,Elite (SIR 2010),Elite (SIR 2010)
+2009,Universities,0.787037037037037,Elite (SIR 2010),Elite (SIR 2010)
+2010,Universities,1.22222222222222,Elite (SIR 2010),Elite (SIR 2010)
+2011,Universities,1.24074074074074,Elite (SIR 2010),Elite (SIR 2010)
+2012,Universities,1.625,Elite (SIR 2010),Elite (SIR 2010)
+2013,Universities,2.13888888888889,Elite (SIR 2010),Elite (SIR 2010)
+2014,Universities,2.03240740740741,Elite (SIR 2010),Elite (SIR 2010)
+2015,Universities,2.38425925925926,Elite (SIR 2010),Elite (SIR 2010)
+2016,Universities,3.06944444444444,Elite (SIR 2010),Elite (SIR 2010)
+2017,Universities,3.63425925925926,Elite (SIR 2010),Elite (SIR 2010)
+2018,Universities,4.09722222222222,Elite (SIR 2010),Elite (SIR 2010)
+2019,Universities,4.77777777777778,Elite (SIR 2010),Elite (SIR 2010)
+2020,Universities,5.46759259259259,Elite (SIR 2010),Elite (SIR 2010)
+2005,Domestic firms,0.152580471138285,Elite (SIR 2010),Elite (SIR 2010)
+2006,Domestic firms,0.182161481747887,Elite (SIR 2010),Elite (SIR 2010)
+2007,Domestic firms,0.229095486423305,Elite (SIR 2010),Elite (SIR 2010)
+2008,Domestic firms,0.233950728286279,Elite (SIR 2010),Elite (SIR 2010)
+2009,Domestic firms,0.234220463945334,Elite (SIR 2010),Elite (SIR 2010)
+2010,Domestic firms,0.257957201942097,Elite (SIR 2010),Elite (SIR 2010)
+2011,Domestic firms,0.292932925732782,Elite (SIR 2010),Elite (SIR 2010)
+2012,Domestic firms,0.287358388778997,Elite (SIR 2010),Elite (SIR 2010)
+2013,Domestic firms,0.280794821075346,Elite (SIR 2010),Elite (SIR 2010)
+2014,Domestic firms,0.276748786189534,Elite (SIR 2010),Elite (SIR 2010)
+2015,Domestic firms,0.360726488041719,Elite (SIR 2010),Elite (SIR 2010)
+2016,Domestic firms,0.341755080021579,Elite (SIR 2010),Elite (SIR 2010)
+2017,Domestic firms,0.357669483905772,Elite (SIR 2010),Elite (SIR 2010)
+2018,Domestic firms,0.378798777198346,Elite (SIR 2010),Elite (SIR 2010)
+2019,Domestic firms,0.429958640532278,Elite (SIR 2010),Elite (SIR 2010)
+2020,Domestic firms,0.419888509260924,Elite (SIR 2010),Elite (SIR 2010)
+2005,DiD counterfactual (firms + pre-gap),1.08017076598267,Elite (SIR 2010),Elite (SIR 2010)
+2006,DiD counterfactual (firms + pre-gap),1.10975177659227,Elite (SIR 2010),Elite (SIR 2010)
+2007,DiD counterfactual (firms + pre-gap),1.15668578126769,Elite (SIR 2010),Elite (SIR 2010)
+2008,DiD counterfactual (firms + pre-gap),1.16154102313067,Elite (SIR 2010),Elite (SIR 2010)
+2009,DiD counterfactual (firms + pre-gap),1.16181075878972,Elite (SIR 2010),Elite (SIR 2010)
+2010,DiD counterfactual (firms + pre-gap),1.18554749678648,Elite (SIR 2010),Elite (SIR 2010)
+2011,DiD counterfactual (firms + pre-gap),1.22052322057717,Elite (SIR 2010),Elite (SIR 2010)
+2012,DiD counterfactual (firms + pre-gap),1.21494868362338,Elite (SIR 2010),Elite (SIR 2010)
+2013,DiD counterfactual (firms + pre-gap),1.20838511591973,Elite (SIR 2010),Elite (SIR 2010)
+2014,DiD counterfactual (firms + pre-gap),1.20433908103392,Elite (SIR 2010),Elite (SIR 2010)
+2015,DiD counterfactual (firms + pre-gap),1.2883167828861,Elite (SIR 2010),Elite (SIR 2010)
+2016,DiD counterfactual (firms + pre-gap),1.26934537486596,Elite (SIR 2010),Elite (SIR 2010)
+2017,DiD counterfactual (firms + pre-gap),1.28525977875016,Elite (SIR 2010),Elite (SIR 2010)
+2018,DiD counterfactual (firms + pre-gap),1.30638907204273,Elite (SIR 2010),Elite (SIR 2010)
+2019,DiD counterfactual (firms + pre-gap),1.35754893537666,Elite (SIR 2010),Elite (SIR 2010)
+2020,DiD counterfactual (firms + pre-gap),1.34747880410531,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,0.592592592549967,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,0.615740740558345,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,0.671296296076272,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,0.777777777516553,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,0.787037036752445,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,1.22222222209691,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,1.24074074060928,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,1.62500000012927,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,2.13888888934216,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,2.03240740807251,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,2.71776792223655,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,2.50186655788754,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,2.70473334016226,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,2.52344327652574,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,2.28529576343648,Elite (SIR 2010),Elite (SIR 2010)
+,Trajectory-balanced counterfactual,2.03288551278289,Elite (SIR 2010),Elite (SIR 2010)
+2005,Universities,0.0144613159797542,Non-elite,Non-elite
+2006,Universities,0.0202458423716558,Non-elite,Non-elite
+2007,Universities,0.0159074475777296,Non-elite,Non-elite
+2008,Universities,0.0180766449746927,Non-elite,Non-elite
+2009,Universities,0.052060737527115,Non-elite,Non-elite
+2010,Universities,0.049530007230658,Non-elite,Non-elite
+2011,Universities,0.081706435285611,Non-elite,Non-elite
+2012,Universities,0.125813449023861,Non-elite,Non-elite
+2013,Universities,0.138105567606652,Non-elite,Non-elite
+2014,Universities,0.163412870571222,Non-elite,Non-elite
+2015,Universities,0.228488792480116,Non-elite,Non-elite
+2016,Universities,0.262111352133044,Non-elite,Non-elite
+2017,Universities,0.436008676789588,Non-elite,Non-elite
+2018,Universities,0.557122198120029,Non-elite,Non-elite
+2019,Universities,1.00036153289949,Non-elite,Non-elite
+2020,Universities,1.2704266088214,Non-elite,Non-elite
+2005,Domestic firms,0.152580471138285,Non-elite,Non-elite
+2006,Domestic firms,0.182161481747887,Non-elite,Non-elite
+2007,Domestic firms,0.229095486423305,Non-elite,Non-elite
+2008,Domestic firms,0.233950728286279,Non-elite,Non-elite
+2009,Domestic firms,0.234220463945334,Non-elite,Non-elite
+2010,Domestic firms,0.257957201942097,Non-elite,Non-elite
+2011,Domestic firms,0.292932925732782,Non-elite,Non-elite
+2012,Domestic firms,0.287358388778997,Non-elite,Non-elite
+2013,Domestic firms,0.280794821075346,Non-elite,Non-elite
+2014,Domestic firms,0.276748786189534,Non-elite,Non-elite
+2015,Domestic firms,0.360726488041719,Non-elite,Non-elite
+2016,Domestic firms,0.341755080021579,Non-elite,Non-elite
+2017,Domestic firms,0.357669483905772,Non-elite,Non-elite
+2018,Domestic firms,0.378798777198346,Non-elite,Non-elite
+2019,Domestic firms,0.429958640532278,Non-elite,Non-elite
+2020,Domestic firms,0.419888509260924,Non-elite,Non-elite
+2005,DiD counterfactual (firms + pre-gap),-0.0222675725728049,Non-elite,Non-elite
+2006,DiD counterfactual (firms + pre-gap),0.00731343803679768,Non-elite,Non-elite
+2007,DiD counterfactual (firms + pre-gap),0.0542474427122158,Non-elite,Non-elite
+2008,DiD counterfactual (firms + pre-gap),0.0591026845751901,Non-elite,Non-elite
+2009,DiD counterfactual (firms + pre-gap),0.0593724202342442,Non-elite,Non-elite
+2010,DiD counterfactual (firms + pre-gap),0.0831091582310074,Non-elite,Non-elite
+2011,DiD counterfactual (firms + pre-gap),0.118084882021693,Non-elite,Non-elite
+2012,DiD counterfactual (firms + pre-gap),0.112510345067907,Non-elite,Non-elite
+2013,DiD counterfactual (firms + pre-gap),0.105946777364257,Non-elite,Non-elite
+2014,DiD counterfactual (firms + pre-gap),0.101900742478445,Non-elite,Non-elite
+2015,DiD counterfactual (firms + pre-gap),0.18587844433063,Non-elite,Non-elite
+2016,DiD counterfactual (firms + pre-gap),0.166907036310489,Non-elite,Non-elite
+2017,DiD counterfactual (firms + pre-gap),0.182821440194683,Non-elite,Non-elite
+2018,DiD counterfactual (firms + pre-gap),0.203950733487256,Non-elite,Non-elite
+2019,DiD counterfactual (firms + pre-gap),0.255110596821189,Non-elite,Non-elite
+2020,DiD counterfactual (firms + pre-gap),0.245040465549835,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.0144613159797515,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.0202458423716545,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.0159074475777289,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.0180766449746916,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.0520607375271135,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.049530007230657,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.0817064352856111,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.125813449023859,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.13810556760665,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.163412870571227,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.257189472536199,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.280659846883557,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.30884681470352,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.308788998878668,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.345972800325946,Non-elite,Non-elite
+,Trajectory-balanced counterfactual,0.327917211418137,Non-elite,Non-elite
+2005,Universities,0.425,Elite public,Elite public
+2006,Universities,0.505,Elite public,Elite public
+2007,Universities,0.5,Elite public,Elite public
+2008,Universities,0.55,Elite public,Elite public
+2009,Universities,0.645,Elite public,Elite public
+2010,Universities,1.1,Elite public,Elite public
+2011,Universities,1.17,Elite public,Elite public
+2012,Universities,1.575,Elite public,Elite public
+2013,Universities,2.03,Elite public,Elite public
+2014,Universities,1.98,Elite public,Elite public
+2015,Universities,2.41,Elite public,Elite public
+2016,Universities,2.96,Elite public,Elite public
+2017,Universities,3.45,Elite public,Elite public
+2018,Universities,4.11,Elite public,Elite public
+2019,Universities,4.55,Elite public,Elite public
+2020,Universities,4.995,Elite public,Elite public
+2005,Domestic firms,0.152580471138285,Elite public,Elite public
+2006,Domestic firms,0.182161481747887,Elite public,Elite public
+2007,Domestic firms,0.229095486423305,Elite public,Elite public
+2008,Domestic firms,0.233950728286279,Elite public,Elite public
+2009,Domestic firms,0.234220463945334,Elite public,Elite public
+2010,Domestic firms,0.257957201942097,Elite public,Elite public
+2011,Domestic firms,0.292932925732782,Elite public,Elite public
+2012,Domestic firms,0.287358388778997,Elite public,Elite public
+2013,Domestic firms,0.280794821075346,Elite public,Elite public
+2014,Domestic firms,0.276748786189534,Elite public,Elite public
+2015,Domestic firms,0.360726488041719,Elite public,Elite public
+2016,Domestic firms,0.341755080021579,Elite public,Elite public
+2017,Domestic firms,0.357669483905772,Elite public,Elite public
+2018,Domestic firms,0.378798777198346,Elite public,Elite public
+2019,Domestic firms,0.429958640532278,Elite public,Elite public
+2020,Domestic firms,0.419888509260924,Elite public,Elite public
+2005,DiD counterfactual (firms + pre-gap),0.9578003956123,Elite public,Elite public
+2006,DiD counterfactual (firms + pre-gap),0.987381406221903,Elite public,Elite public
+2007,DiD counterfactual (firms + pre-gap),1.03431541089732,Elite public,Elite public
+2008,DiD counterfactual (firms + pre-gap),1.03917065276029,Elite public,Elite public
+2009,DiD counterfactual (firms + pre-gap),1.03944038841935,Elite public,Elite public
+2010,DiD counterfactual (firms + pre-gap),1.06317712641611,Elite public,Elite public
+2011,DiD counterfactual (firms + pre-gap),1.0981528502068,Elite public,Elite public
+2012,DiD counterfactual (firms + pre-gap),1.09257831325301,Elite public,Elite public
+2013,DiD counterfactual (firms + pre-gap),1.08601474554936,Elite public,Elite public
+2014,DiD counterfactual (firms + pre-gap),1.08196871066355,Elite public,Elite public
+2015,DiD counterfactual (firms + pre-gap),1.16594641251573,Elite public,Elite public
+2016,DiD counterfactual (firms + pre-gap),1.14697500449559,Elite public,Elite public
+2017,DiD counterfactual (firms + pre-gap),1.16288940837979,Elite public,Elite public
+2018,DiD counterfactual (firms + pre-gap),1.18401870167236,Elite public,Elite public
+2019,DiD counterfactual (firms + pre-gap),1.23517856500629,Elite public,Elite public
+2020,DiD counterfactual (firms + pre-gap),1.22510843373494,Elite public,Elite public
+,Trajectory-balanced counterfactual,0.424999999999192,Elite public,Elite public
+,Trajectory-balanced counterfactual,0.504999999998252,Elite public,Elite public
+,Trajectory-balanced counterfactual,0.49999999999758,Elite public,Elite public
+,Trajectory-balanced counterfactual,0.549999999997319,Elite public,Elite public
+,Trajectory-balanced counterfactual,0.64499999999657,Elite public,Elite public
+,Trajectory-balanced counterfactual,1.09999999999896,Elite public,Elite public
+,Trajectory-balanced counterfactual,1.1699999999995,Elite public,Elite public
+,Trajectory-balanced counterfactual,1.57500000000195,Elite public,Elite public
+,Trajectory-balanced counterfactual,2.0300000000042,Elite public,Elite public
+,Trajectory-balanced counterfactual,1.98000000000643,Elite public,Elite public
+,Trajectory-balanced counterfactual,2.7481301515463,Elite public,Elite public
+,Trajectory-balanced counterfactual,2.67844061225366,Elite public,Elite public
+,Trajectory-balanced counterfactual,2.92111422883869,Elite public,Elite public
+,Trajectory-balanced counterfactual,2.63433853986496,Elite public,Elite public
+,Trajectory-balanced counterfactual,2.35238175850216,Elite public,Elite public
+,Trajectory-balanced counterfactual,1.99811060470977,Elite public,Elite public
+2005,Universities,0.0147866497676384,Non-elite private,Non-elite private
+2006,Universities,0.0190114068441065,Non-elite private,Non-elite private
+2007,Universities,0.0114068441064639,Non-elite private,Non-elite private
+2008,Universities,0.0143641740599916,Non-elite private,Non-elite private
+2009,Universities,0.0574566962399662,Non-elite private,Non-elite private
+2010,Universities,0.0528094634558513,Non-elite private,Non-elite private
+2011,Universities,0.0895648500211238,Non-elite private,Non-elite private
+2012,Universities,0.137304604985213,Non-elite private,Non-elite private
+2013,Universities,0.131812420785805,Non-elite private,Non-elite private
+2014,Universities,0.178284748626954,Non-elite private,Non-elite private
+2015,Universities,0.251373046049852,Non-elite private,Non-elite private
+2016,Universities,0.290240811153359,Non-elite private,Non-elite private
+2017,Universities,0.492606675116181,Non-elite private,Non-elite private
+2018,Universities,0.623996620194339,Non-elite private,Non-elite private
+2019,Universities,1.11829319814111,Non-elite private,Non-elite private
+2020,Universities,1.43895226024504,Non-elite private,Non-elite private
+2005,Domestic firms,0.152580471138285,Non-elite private,Non-elite private
+2006,Domestic firms,0.182161481747887,Non-elite private,Non-elite private
+2007,Domestic firms,0.229095486423305,Non-elite private,Non-elite private
+2008,Domestic firms,0.233950728286279,Non-elite private,Non-elite private
+2009,Domestic firms,0.234220463945334,Non-elite private,Non-elite private
+2010,Domestic firms,0.257957201942097,Non-elite private,Non-elite private
+2011,Domestic firms,0.292932925732782,Non-elite private,Non-elite private
+2012,Domestic firms,0.287358388778997,Non-elite private,Non-elite private
+2013,Domestic firms,0.280794821075346,Non-elite private,Non-elite private
+2014,Domestic firms,0.276748786189534,Non-elite private,Non-elite private
+2015,Domestic firms,0.360726488041719,Non-elite private,Non-elite private
+2016,Domestic firms,0.341755080021579,Non-elite private,Non-elite private
+2017,Domestic firms,0.357669483905772,Non-elite private,Non-elite private
+2018,Domestic firms,0.378798777198346,Non-elite private,Non-elite private
+2019,Domestic firms,0.429958640532278,Non-elite private,Non-elite private
+2020,Domestic firms,0.419888509260924,Non-elite private,Non-elite private
+2005,DiD counterfactual (firms + pre-gap),-0.0195194184983887,Non-elite private,Non-elite private
+2006,DiD counterfactual (firms + pre-gap),0.0100615921112139,Non-elite private,Non-elite private
+2007,DiD counterfactual (firms + pre-gap),0.056995596786632,Non-elite private,Non-elite private
+2008,DiD counterfactual (firms + pre-gap),0.0618508386496063,Non-elite private,Non-elite private
+2009,DiD counterfactual (firms + pre-gap),0.0621205743086604,Non-elite private,Non-elite private
+2010,DiD counterfactual (firms + pre-gap),0.0858573123054236,Non-elite private,Non-elite private
+2011,DiD counterfactual (firms + pre-gap),0.120833036096109,Non-elite private,Non-elite private
+2012,DiD counterfactual (firms + pre-gap),0.115258499142323,Non-elite private,Non-elite private
+2013,DiD counterfactual (firms + pre-gap),0.108694931438673,Non-elite private,Non-elite private
+2014,DiD counterfactual (firms + pre-gap),0.104648896552861,Non-elite private,Non-elite private
+2015,DiD counterfactual (firms + pre-gap),0.188626598405046,Non-elite private,Non-elite private
+2016,DiD counterfactual (firms + pre-gap),0.169655190384906,Non-elite private,Non-elite private
+2017,DiD counterfactual (firms + pre-gap),0.185569594269099,Non-elite private,Non-elite private
+2018,DiD counterfactual (firms + pre-gap),0.206698887561672,Non-elite private,Non-elite private
+2019,DiD counterfactual (firms + pre-gap),0.257858750895605,Non-elite private,Non-elite private
+2020,DiD counterfactual (firms + pre-gap),0.247788619624251,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.0147866497719915,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.0190114068466065,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.0114068441096688,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.0143641740607873,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.0574566962355522,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.052809463451892,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.0895648500187521,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.137304604986149,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.131812420783721,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.178284748627985,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.275431803884723,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.30560745770747,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.329574611946344,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.32274268564657,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.35703361232249,Non-elite private,Non-elite private
+,Trajectory-balanced counterfactual,0.341135542591046,Non-elite private,Non-elite private

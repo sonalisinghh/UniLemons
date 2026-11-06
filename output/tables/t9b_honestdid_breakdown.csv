@@ -1,0 +1,12 @@
+group,outcome,breakdown_Mbar
+All universities,filings,1
+Central,filings,0.5
+Private,filings,1
+Elite (SIR 2010),filings,0.5
+Non-elite,filings,1
+Elite public,filings,0.5
+Non-elite private,filings,1
+All universities,granted,1
+Central,granted,0.5
+Private,granted,0.5
+Elite (SIR 2010),granted,0.5
